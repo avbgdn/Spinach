@@ -75,6 +75,12 @@ function [source_cube,ranges,pred_pcs,err_ls,reg_a,reg_b]=ipcs(parameters,npoint
 % Check consistency
 grumble(parameters,npoints,lambda);
 
+% Kill stupid ass figure defaults in R2025a and later 
+set(groot,'defaultFigurePosition',[680 458 560 420]); 
+set(groot,'defaultFigureWindowStyle','normal'); 
+set(groot,'defaultFigureMenuBar','figure'); 
+set(groot,'defaultFigureToolbar','figure'); 
+
 % Allow GPUs Matlab has not yet seen
 parallel.gpu.enableCUDAForwardCompatibility(true);
 
@@ -375,7 +381,7 @@ end
                   min([parameters.xyz_all(:,3); a(5)]) max([parameters.xyz_all(:,3); a(6)])]);
         end
         if ismember('diagnostics',parameters.plot)
-            set(groot,'CurrentFigure',2); clf reset; hold on; plot(expt_pcs,theo_pcs,'ro');
+            set(groot,'CurrentFigure',2); clf; hold on; plot(expt_pcs,theo_pcs,'ro');
             plot([min(expt_pcs) max(expt_pcs)],[min(expt_pcs) max(expt_pcs)],'b-');
             annotation('textbox',[0.15 0.7 0.2 0.2],...
                        'String',{['Density integral: '  num2str(normint)],...
