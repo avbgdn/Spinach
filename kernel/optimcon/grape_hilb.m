@@ -58,7 +58,7 @@
 
 function [traj_data,fidelity,grad,hess]=grape_hilb(spin_system,drifts,controls,...
                                                    waveform,rho_init,rho_targ,...
-                                                   fidelity_type) %#ok<*PFBNS>
+                                                   fidelity_type)
 
 % Check consistency
 grumble(spin_system,drifts,controls,waveform,rho_init,rho_targ,fidelity_type);
@@ -92,9 +92,7 @@ switch spin_system.control.integrator
 end
 
 % Hush up the output
-ss_parfor.sys=spin_system.sys; ss_parfor.tols=spin_system.tols;
-ss_parfor.bas.formalism=spin_system.bas.formalism;
-ss_parfor.sys.output='hush';
+spin_system.sys.output='hush';
 
 % Pull the target back through the dead time using
 % the last drift generator in the drift array
@@ -129,6 +127,12 @@ end
 % Count the drifts
 ndrifts=numel(drifts);
 
+% Pull Bloch-Siegert response operators
+bss_on=isfield(spin_system.control,'bsiegert')&&spin_system.control.bsiegert;
+if bss_on
+    resp_ops=spin_system.control.resp_ops;
+end
+
 % Precompute interval Hamiltonians and propagators
 switch spin_system.control.integrator
 
@@ -139,7 +143,7 @@ switch spin_system.control.integrator
         H=cell(1,nsteps); P=cell(1,nsteps);
 
         % Precompute evolution generators and propagators
-        parfor n=1:nsteps
+        for n=1:nsteps
 
             % Cycle through the drifts array
             H{n}=drifts{mod(n-1,ndrifts)+1};
@@ -152,8 +156,15 @@ switch spin_system.control.integrator
 
             end
 
+            % Add Bloch-Siegert terms to the generator
+            if bss_on
+                for k=1:nctrls
+                    H{n}=H{n}+waveform(k,n)^2*resp_ops{k};
+                end
+            end
+
             % Compute the interval propagator
-            P{n}=propagator(ss_parfor,H{n},dt(n));
+            P{n}=propagator(spin_system,H{n},dt(n));
 
         end
 
@@ -164,7 +175,7 @@ switch spin_system.control.integrator
         H=cell(1,nsteps); P=cell(1,nsteps);
 
         % Precompute edge generators and propagators
-        parfor n=1:nsteps
+        for n=1:nsteps
 
             % Cycle through the drifts array
             left_ham=drifts{mod(n-1,ndrifts)+1};
@@ -182,7 +193,7 @@ switch spin_system.control.integrator
                                    right_ham*left_ham);
 
             % Compute the interval propagator
-            P{n}=propagator(ss_parfor,H{n},dt(n));
+            P{n}=propagator(spin_system,H{n},dt(n));
 
         end
 
@@ -231,7 +242,7 @@ if n_outputs>2
 end
 
 % Calculate the state overlap
-overlap=hdot(fwd_traj{end},rho_targ);
+overlap=hdot(rho_targ,fwd_traj{end});
 
 % Compute gradient
 if n_outputs>2
@@ -246,7 +257,7 @@ if n_outputs>2
         case 'rectangle'
 
             % Loop over control sequence
-            parfor n=1:nsteps
+            for n=1:nsteps
 
                 % Allocate local gradient column
                 grad_col=zeros(nctrls,1,'like',1i);
@@ -254,8 +265,15 @@ if n_outputs>2
                 % Calculate gradient at this timestep
                 for k=1:nctrls
 
+                    % Pull the derivative direction through the Bloch-Siegert map
+                    if bss_on
+                        deriv_op=controls{k}+2*waveform(k,n)*resp_ops{k};
+                    else
+                        deriv_op=controls{k};
+                    end
+
                     % Compute directional derivative of the propagator
-                    auxmat=dirdiff(ss_parfor,H{n},controls{k},dt(n),2);
+                    auxmat=dirdiff(spin_system,H{n},deriv_op,dt(n),2);
 
                     % Apply the derivative to the density matrix
                     rho_deriv=auxmat{2}*fwd_traj{n}*auxmat{1}'+...
@@ -282,7 +300,7 @@ if n_outputs>2
             dim=size(drifts{1},1);
 
             % Loop over control sequence
-            parfor n=1:(nsteps+1)
+            for n=1:(nsteps+1)
 
                 % Allocate local gradient column
                 grad_col=zeros(nctrls,1,'like',1i);
@@ -303,7 +321,7 @@ if n_outputs>2
                                              waveform(:,2),k);
 
                         % Exponentiate the auxiliary matrix
-                        auxmat=propagator(ss_parfor,DL_first,dt(n));
+                        auxmat=propagator(spin_system,DL_first,dt(n));
 
                         % Extract propagator and derivative
                         P_aux=auxmat(1:dim,1:dim);
@@ -335,7 +353,7 @@ if n_outputs>2
                                             waveform(:,end),k);
 
                         % Exponentiate the auxiliary matrix
-                        auxmat=propagator(ss_parfor,DR_last,dt(n-1));
+                        auxmat=propagator(spin_system,DR_last,dt(n-1));
 
                         % Extract propagator and derivative
                         P_aux=auxmat(1:dim,1:dim);
@@ -366,7 +384,7 @@ if n_outputs>2
                                              waveform(:,n+1),k);
 
                         % Exponentiate the auxiliary matrix
-                        auxmat=propagator(ss_parfor,Right_DL,dt(n));
+                        auxmat=propagator(spin_system,Right_DL,dt(n));
 
                         % Extract propagator and derivative
                         P_aux=auxmat(1:dim,1:dim);
@@ -390,7 +408,7 @@ if n_outputs>2
                                             waveform(:,n),k);
 
                         % Exponentiate the auxiliary matrix
-                        auxmat=propagator(ss_parfor,Left_DR,dt(n-1));
+                        auxmat=propagator(spin_system,Left_DR,dt(n-1));
 
                         % Extract propagator and derivative
                         P_aux=auxmat(1:dim,1:dim);
@@ -434,7 +452,7 @@ if strcmp(spin_system.control.integrator,'rectangle')&&(n_outputs>3)
     d2P=cell(nctrls,nctrls,nsteps);
 
     % Compute derivative propagators
-    parfor n=1:nsteps
+    for n=1:nsteps
 
         % Preallocate local derivative arrays
         dP_col=cell(nctrls,1);
@@ -444,12 +462,12 @@ if strcmp(spin_system.control.integrator,'rectangle')&&(n_outputs>3)
         for k=1:nctrls
 
             % First derivative of the propagator
-            auxmat=dirdiff(ss_parfor,H{n},controls{k},dt(n),2);
+            auxmat=dirdiff(spin_system,H{n},controls{k},dt(n),2);
             dP_col{k}=auxmat{2};
 
             % Second derivative of the propagator
             for j=1:nctrls
-                auxmat=dirdiff(ss_parfor,H{n},{controls{k},controls{j}},dt(n),3);
+                auxmat=dirdiff(spin_system,H{n},{controls{k},controls{j}},dt(n),3);
                 d2P_block{k,j}=auxmat{3};
             end
 

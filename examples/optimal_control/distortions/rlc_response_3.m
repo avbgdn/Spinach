@@ -57,6 +57,8 @@ Lx=operator(spin_system,'Lx','2H');
 Ly=operator(spin_system,'Ly','2H');
 
 % Define control parameters
+control.isotopes={'2H'};                       % Isotopes
+control.channels=[1; 1];                       % Channel map
 control.operators={Lx,Ly};                     % Controls
 control.rho_init={rho_init};                   % Starting state
 control.rho_targ={rho_targ};                   % Destination state
@@ -68,7 +70,6 @@ control.dead_time=100e-6;                      % Dead time
 control.penalties={'NS'};                      % Penalty types
 control.p_weights=1;                           % Penalty weights
 control.method='lbfgs';                        % Optimisation method
-control.parallel='ensemble';                   % Parallel strategy
 control.integrator='trapezium';                % Piecewise-linear
 
 % Freeze the edges

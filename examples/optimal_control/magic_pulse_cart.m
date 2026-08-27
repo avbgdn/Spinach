@@ -54,11 +54,13 @@ Lx=operator(spin_system,'Lx','13C');
 Ly=operator(spin_system,'Ly','13C');
 
 % Get the drift Hamiltonian
-H=hamiltonian(assume(spin_system,'nmr'));
+D=hamiltonian(assume(spin_system,'nmr'));
 
 % Define control parameters
-control.drifts={{H}};                              % Drift
-control.operators={Lx,Ly};                         % Controls
+control.isotopes={'13C'};                          % Isotopes
+control.channels=[1; 1];                           % Channel map
+control.drifts={{D}};                              % Drift operator
+control.operators={Lx,Ly};                         % Control operators
 control.rho_init={ Sx Sy Sz};                      % Starting states
 control.rho_targ={-Sz Sy Sx};                      % Target states
 control.pulse_dt=1e-6*ones(1,40);                  % Pulse interval grid
@@ -67,7 +69,6 @@ control.method='lbfgs';                            % Optimisation method
 control.penalties={'NS','SNS'};                    % Penalty types
 control.p_weights=[0.01 10.0];                     % Penalty weights
 control.max_iter=200;                              % Termination condition
-control.parallel='ensemble';                       % Parallelisation
 
 % Plotting options
 control.plotting={'xy_controls','robustness','spectrogram'};
@@ -87,7 +88,7 @@ CLx=xy_profile(1,:); CLy=xy_profile(2,:);
 
 % Simulate the optimised pulse
 rho_init=state(spin_system,'Lz','13C');
-rho=shaped_pulse_xy(spin_system,H,{Lx,Ly},{CLx,CLy},...
+rho=shaped_pulse_xy(spin_system,D,{Lx,Ly},{CLx,CLy},...
                     control.pulse_dt,rho_init,'expv-pwc');
 
 % Set acquisition parameters

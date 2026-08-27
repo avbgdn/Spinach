@@ -44,6 +44,8 @@ rho_init=rho_init/norm(rho_init,'fro');
 rho_targ=rho_targ/norm(rho_targ,'fro');
 
 % Define control parameters
+control.isotopes={'T4'};
+control.channels=[1;1];
 control.drifts={{H}};
 control.operators={Cx,Cy};
 control.rho_init={rho_init};
@@ -54,7 +56,6 @@ control.penalties={'NS'};
 control.p_weights=0.001;
 control.method='lbfgs';
 control.max_iter=200;
-control.parallel='ensemble';
 
 % Plots during optimisation
 control.plotting={'xy_controls'};

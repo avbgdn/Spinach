@@ -82,6 +82,8 @@ parameters.offset=[-spin('E')*sys.magnet/(2*pi)-94.0e9, 0];
 control.drifts=drifts(spin_system,@powder,parameters,'esr');
 
 % Define control parameters
+control.isotopes={'E'};                          % Isotopes
+control.channels=[1; 1];                         % Channel map
 control.operators={Ex,Ey};                       % Controls
 control.rho_init={rho_init};                     % Starting state
 control.rho_targ={rho_targ};                     % Destination state
@@ -99,7 +101,6 @@ control.amplitudes=[ones(1,720) ...              % Pulse itself
                     zeros(1,1)];                 % Sequence delay
 control.method='rbfgs';                          % Optimisation method
 control.max_iter=10000;                          % Maximum iterations
-control.parallel='ensemble';                     % Parallelisation
 control.steady=true();                           % Steady state
 control.budget=500;                              % Increase this
 

@@ -22,7 +22,7 @@ result=new_test_result('optimcon/grape_one_spin',...
                        'One-spin optimal-control setup and GRAPE gradient',...
                        'optimcon() and grape_hilb() must handle a tiny Hilbert-space control problem.');
 
-% Ensure that optimcon() has a process-pool ValueStore available
+% Ensure that a parallel pool is available for the ensemble loop
 current_pool=gcp('nocreate');
 if isempty(current_pool)
     parpool('Processes',1);
@@ -37,6 +37,8 @@ drift=sparse(2,2);
 pulse_dt=[0.02 0.03];
 
 % Configure a minimal optimal-control problem
+control.isotopes={'E'};
+control.channels=1;
 control.operators={S.y};
 control.rho_init={S.x};
 control.rho_targ={S.z};
@@ -139,6 +141,7 @@ spin_system.tols.small_matrix=64;
 spin_system.tols.dense_matrix=0.5;
 spin_system.tols.prop_chop=1e-14;
 spin_system.bas.formalism='zeeman-hilb';
+spin_system.comp.isotopes={'E'};
 
 end
 

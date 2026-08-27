@@ -53,6 +53,8 @@ rho_targ=rho_targ/norm(rho_targ,'fro');
 wave_set=[wave_basis('sine_waves',2,40) wave_basis('cosine_waves',3,40)]';
 
 % Define control parameters
+control.isotopes={'C4','E'};
+control.channels=[1;1;2;2];
 control.drifts={{H}};
 control.operators=ops;
 control.rho_init={rho_init};
@@ -64,7 +66,6 @@ control.penalties={'NS'};
 control.p_weights=0.001;
 control.method='lbfgs';
 control.max_iter=300;
-control.parallel='ensemble';
 
 % Plots during optimisation
 control.plotting={'xy_controls'};

@@ -25,7 +25,7 @@ result=new_test_result('kernel/dynamic_optimcon_remaining',...
                        ['Remaining optimcon helper functions must pass '...
                         'small deterministic regression checks.']);
 
-% Ensure that optimcon and ensemble can use a process-pool ValueStore
+% Ensure that a parallel pool is available for the ensemble loop
 local_ensure_pool();
 
 % Run independent groups of small checks
@@ -585,6 +585,7 @@ spin_system.tols.small_matrix=64;
 spin_system.tols.dense_matrix=0.5;
 spin_system.tols.prop_chop=1e-14;
 spin_system.bas.formalism=formalism;
+spin_system.comp.isotopes={'E'};
 
 end
 
@@ -594,6 +595,8 @@ function spin_system=local_hilb_control_system()
 % Build a minimal Hilbert-space one-spin optimal-control system
 spin_system=local_spin_system('zeeman-hilb');
 S=pauli(2);
+control.isotopes={'E'};
+control.channels=[1;1];
 control.operators={S.x,S.y};
 control.rho_init={S.x};
 control.rho_targ={S.z};
@@ -607,7 +610,6 @@ control.p_weights=0;
 control.l_bound=-100;
 control.u_bound=100;
 control.plotting={};
-control.parallel='time';
 control.amplitudes=[5 6 7];
 spin_system=optimcon(spin_system,control);
 
@@ -628,7 +630,6 @@ spin_system.control.suffix=[];
 spin_system.control.keyholes=cell(1,2);
 spin_system.control.method='newton';
 spin_system.control.plotting={};
-spin_system.control.parallel='time';
 spin_system.control.freeze=[];
 spin_system.control.steady=false();
 drift=[0.20 0.10; -0.05 -0.10];
@@ -644,6 +645,8 @@ function spin_system=local_sphten_control_system()
 % Build a tiny spherical-tensor-like cooperative-control fixture
 spin_system=local_spin_system('sphten-liouv');
 spin_system.bas.basis=[0; 1];
+control.isotopes={'E'};
+control.channels=[1;1];
 control.operators={[0 1; 1 0],[0 -1i; 1i 0]};
 control.rho_init={[1; 0.2]};
 control.rho_targ={[0.3; 1.0]};
@@ -657,7 +660,6 @@ control.p_weights=0;
 control.l_bound=-100;
 control.u_bound=100;
 control.plotting={'correlation_order'};
-control.parallel='time';
 control.amplitudes=[4 5];
 spin_system=optimcon(spin_system,control);
 

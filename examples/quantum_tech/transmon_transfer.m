@@ -63,6 +63,8 @@ rho_targ=(rho_targ+rho_targ')/2;
 rho_targ=rho_targ/sorensen(rho_init,rho_targ);
 
 % Define control parameters
+control.isotopes={'T3','T5'};                          % Isotopes
+control.channels=[1;2];                                % Channel map
 control.drifts={{H}};                                  % Drift
 control.operators={C_A,C_B};                           % Controls
 control.off_ops={O_A,O_B};                             % Offset operators
@@ -76,7 +78,6 @@ control.penalties={'SNSA'};                            % Penalties
 control.p_weights=1.0;                                 % Penalty weights
 control.method='rbfgs';                                % Optimisation method
 control.max_iter=200;                                  % Termination condition
-control.parallel='ensemble';                           % Parallelisation mode
 
 % Plots during optimisation
 control.plotting={'xy_controls','spectrogram','robustness'};

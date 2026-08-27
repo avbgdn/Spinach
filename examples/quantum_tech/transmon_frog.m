@@ -56,6 +56,8 @@ rho_init=rho_init/norm(rho_init,2);
 rho_targ=rho_targ/norm(rho_targ,2);
 
 % Define control parameters
+control.isotopes={'T3'};                             % Isotopes
+control.channels=[1;1];                              % Channel map
 control.drifts={{H}};                                % Drift
 control.operators={Cx,Cy};                           % Control
 control.rho_init={rho_init};                         % Starting state
@@ -66,7 +68,6 @@ control.penalties={'SNSA'};                          % Penalties
 control.p_weights=0.01;                              % Penalty weights
 control.method='goodwin';                            % Optimisation method
 control.max_iter=50;                                 % Termination condition
-control.parallel='ensemble';                         % Parallelisation mode
 
 % Plots during optimisation
 control.plotting={'xy_controls','spectrogram','robustness'};

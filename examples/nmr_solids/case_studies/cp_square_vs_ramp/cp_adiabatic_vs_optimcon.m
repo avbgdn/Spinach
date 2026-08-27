@@ -64,6 +64,8 @@ xlim tight; kgrid; kxlabel('time, seconds'); drawnow();
 %% GRAPE optimisation with the same timing
 
 % Drift Hamiltonians for every system in the powder
+control.isotopes={'1H','15N'};
+control.channels=[1;2];
 control.drifts=drifts(spin_system,@powder,parameters,'qnmr');
 
 % Initial state: Ly on 1H
@@ -88,7 +90,6 @@ control.penalties={'SNS'};                % Penalty
 control.p_weights=100;                    % Penalty weight
 control.method='lbfgs';                   % Optimisation method
 control.max_iter=30;                      % Termination tolerance
-control.parallel='ensemble';              % Parallelisation
 
 % Spinach housekeeping
 spin_system=optimcon(spin_system,control);

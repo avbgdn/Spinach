@@ -74,6 +74,8 @@ parameters.offset=[3214 10000 -4800];
 H=frqoffset(spin_system,H,parameters);
 
 % Define control parameters
+control.isotopes={'1H','13C','15N'};              % Isotopes
+control.channels=[1; 1; 2; 2; 3; 3];              % Channel map
 control.drifts={{H}};                             % Drift
 control.operators={LxH,LyH,LxC,LyC,LxN,LyN};      % Controls
 control.off_ops={LzH,LzC,LzN};                    % Offset operators 
@@ -88,7 +90,6 @@ control.penalties={'NS'};                         % Penalty function
 control.p_weights=0.01;                           % Penalty weight
 control.method='lbfgs';                           % Optimisation method
 control.max_iter=500;                             % Termination tolerance
-control.parallel='ensemble';                      % Parallelisation
 
 % Control trajectory analysis plots
 control.plotting={'correlation_order','local_each_spin',...

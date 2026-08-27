@@ -41,6 +41,12 @@ grumble(spin_system,waveform);
 % Count penalty terms
 npenterms=numel(spin_system.control.penalties);
 
+% Freeze masks act on time points, waveform bases mix them
+if (~isempty(spin_system.control.basis))&&...
+   (~isempty(spin_system.control.freeze))
+    error('control.freeze cannot be combined with control.basis.');
+end
+
 % Translate the basis if necessary
 if ~isempty(spin_system.control.basis)
     nwaves=size(spin_system.control.basis,1);
@@ -131,22 +137,22 @@ elseif nargout==4
         grad=permute(grad,[2 1 3]);
         
         % Preallocate transformed Hessians
-        hess_in_basis=zeros([nwaves*numel(spin_system.control.operators) ...
-                             nwaves*numel(spin_system.control.operators) ...
+        hess_in_basis=zeros([nwaves*spin_system.control.ncontrols ...
+                             nwaves*spin_system.control.ncontrols ...
                              npenterms+1]);
 
         % Transform Hessians
         for n=1:size(hess,3)
 
             % Reorder Hessian
-            hess_re=hess_reorder(hess(:,:,n),numel(spin_system.control.operators),...
+            hess_re=hess_reorder(hess(:,:,n),spin_system.control.ncontrols,...
                                              spin_system.control.pulse_nsteps);
 
             % Fold up the block matrix into a 4D tensor
             hess_re=reshape(hess_re,[spin_system.control.pulse_nsteps ...
-                                     numel(spin_system.control.operators) ...
+                                     spin_system.control.ncontrols ...
                                      spin_system.control.pulse_nsteps ...
-                                     numel(spin_system.control.operators)]);
+                                     spin_system.control.ncontrols]);
 
             % Transform the Hessian
             hess_re=tensorprod(spin_system.control.basis,hess_re,2,1);
@@ -154,12 +160,12 @@ elseif nargout==4
             hess_re=permute(hess_re,[2 3 1 4]);
 
             % Unfold the 4D tensor into block matrix
-            hess_re=reshape(hess_re,[nwaves*numel(spin_system.control.operators) ...
-                                     nwaves*numel(spin_system.control.operators)]);
+            hess_re=reshape(hess_re,[nwaves*spin_system.control.ncontrols ...
+                                     nwaves*spin_system.control.ncontrols]);
 
             % Reorder transformed Hessian
             hess_in_basis(:,:,n)=hess_reorder(hess_re,nwaves,...
-                                              numel(spin_system.control.operators));
+                                              spin_system.control.ncontrols);
 
         end
 
@@ -180,7 +186,7 @@ end
 if (~isnumeric(waveform))||(~isreal(waveform))
     error('waveform must be an array of real numbers.');
 end
-if size(waveform,1)~=numel(spin_system.control.operators)
+if size(waveform,1)~=spin_system.control.ncontrols
     error('the number of rows in waveform must be equal to the number of controls.');
 end
 if ~isempty(spin_system.control.basis)

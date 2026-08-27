@@ -1,6 +1,6 @@
 % Validates optimal control options and updates the spin system
 % object. Syntax:
-% 
+%
 %          spin_system=optimcon(spin_system,control)
 %
 % Parameters:
@@ -9,12 +9,27 @@
 %                    created by create.m and updated
 %                    by basis.m functions
 %
-%     control      - control data structure described 
+%     control      - control data structure described
 %                    in detail in the online manual
 %
 % Outputs:
 %
 %     spin_system  - updated Spinach data structure
+%
+% Note: this function freezes the optimisation problem. The ensemble
+%       case catalog is built here, and the complete frozen problem
+%       is published to the parallel pool workers exactly once, as a
+%       parallel.pool.Constant held in spin_system.control.invari-
+%       ants. Heavy invariants - the drift generators, the control
+%       operators, the offset operators, the control commutators,
+%       and the Bloch-Siegert response operators - are then removed
+%       from the returned structure, and their names are recorded
+%       in spin_system.control.frozen_fields. All other control
+%       fields stay live: ensemble() re-sends them to the workers
+%       at every evaluation, and they may be overwritten between
+%       optimisations. Changes to the ensemble composition, the
+%       operators, or the generators require a fresh optimcon()
+%       call.
 %
 % david.goodwin@inano.au.dk
 % u.rasulov@soton.ac.uk
@@ -150,6 +165,56 @@ herm_gens=ismember(spin_system.bas.formalism,...
                    {'zeeman-hilb','zeeman-wavef'})||...
           strcmp(spin_system.control.method,'goodwin');
 
+% Process isotope list
+if isfield(control,'isotopes')
+
+    % Input validation
+    if (~iscell(control.isotopes))||(~all(cellfun(@ischar,control.isotopes(:))))
+        error('control.isotopes must be a cell array of character strings.');
+    end
+    for n=1:numel(control.isotopes)
+        if ~ismember(control.isotopes{n},spin_system.comp.isotopes)
+            error('control.isotopes refers to spins that are not present.');
+        end
+    end
+
+    % Absorb isotope list
+    spin_system.control.isotopes=control.isotopes;
+    control=rmfield(control,'isotopes');
+
+else
+
+    % Complain and bomb out
+    error('active isotope list must be supplied in control.isotopes field.');
+
+end
+
+% Process control channel map
+if isfield(control,'channels')
+
+    % Input validation
+    if (~isnumeric(control.channels))||(~isreal(control.channels))||...
+       (~isvector(control.channels))||isempty(control.channels)
+        error('control.channels must be a real numeric vector.');
+    end
+    if (~all(mod(control.channels,1)==0))||any(control.channels<1)
+        error('elements of control.channels must be positive integers.');
+    end
+    if any(control.channels>numel(spin_system.control.isotopes))
+        error('elements of control.channels must not exceed isotope count.');
+    end
+
+    % Absorb control channel map
+    spin_system.control.channels=control.channels(:);
+    control=rmfield(control,'channels');
+
+else
+
+    % Complain and bomb out
+    error('control channel map must be supplied in control.channels field.');
+
+end
+
 % Process control operators
 if isfield(control,'operators')
 
@@ -165,6 +230,11 @@ if isfield(control,'operators')
 
     % Control operator count
     spin_system.control.ncontrols=numel(control.operators);
+
+    % Match the channel map to the control operators
+    if numel(spin_system.control.channels)~=spin_system.control.ncontrols
+        error('control.channels must have one element per control operator.');
+    end
 
     % Absorb control operators and clean them up
     for n=1:spin_system.control.ncontrols
@@ -336,9 +406,12 @@ if isfield(control,'steady')
     if ~islogical(control.steady) || ~isscalar(control.steady)
         error('control.steady must be true() or false()');
     end
+    if control.steady&&(~strcmp(spin_system.bas.formalism,'sphten-liouv'))
+        error('stroboscopic steady states require sphten-liouv formalism.');
+    end
 
     % Absorb stroboscopic steady state switch
-    spin_system.control.steady=control.steady; 
+    spin_system.control.steady=control.steady;
     control=rmfield(control,'steady');
 
     % Inform the user
@@ -566,12 +639,87 @@ else
     
 end
 
+% Process Bloch-Siegert settings
+if isfield(control,'bsiegert')
+    
+    % Input validation
+    if (~islogical(control.bsiegert))||(~isscalar(control.bsiegert))
+        error('control.bsiegert must be a logical scalar.');
+    end
+    
+    % Absorb the switch
+    spin_system.control.bsiegert=control.bsiegert;
+    control=rmfield(control,'bsiegert');
+    
+    % Branch on the switch
+    if spin_system.control.bsiegert
+        
+        % Refuse methods that use exact Hessians
+        if ismember(spin_system.control.method,{'newton','goodwin'})
+            error('Bloch-Siegert corrections are only available with LBFGS optimisers.');
+        end
+        
+        % Refuse the trapezium integrator
+        if strcmp(spin_system.control.integrator,'trapezium')
+            error('Bloch-Siegert corrections are not available for trapezium integrator.');
+        end
+        
+        % Isotope of each control channel
+        chan_isos=spin_system.control.isotopes(spin_system.control.channels);
+
+        % Corrected channels need waveform values to be physical nutation frequencies
+        for n=1:numel(chan_isos)
+
+            % Canonical transverse operators of the channel
+            Lxc=operator(spin_system,'Lx',chan_isos{n});
+            Lyc=operator(spin_system,'Ly',chan_isos{n});
+
+            % Project the control operator onto the quadratures
+            quad_x=hdot(Lxc,spin_system.control.operators{n})/hdot(Lxc,Lxc);
+            quad_y=hdot(Lyc,spin_system.control.operators{n})/hdot(Lyc,Lyc);
+
+            % Require a unit quadrature of the canonical operators
+            resid=spin_system.control.operators{n}-quad_x*Lxc-quad_y*Lyc;
+            if (norm(resid,'fro')>1e-6*norm(Lxc,'fro'))||...
+               (abs(quad_x^2+quad_y^2-1)>1e-6)
+                error('with control.bsiegert, control operators must be unit quadratures of Lx and Ly on their channel isotope.');
+            end
+
+        end
+
+        % On-resonance carrier frequency of each control channel
+        carrier_frq=zeros(1,numel(chan_isos));
+        for n=1:numel(chan_isos)
+            carrier_frq(n)=-spin(chan_isos{n})*spin_system.inter.magnet;
+        end
+
+        % Build the response operators, stored without clean-up
+        spin_system.control.resp_ops=bss_ops(spin_system,chan_isos,carrier_frq);
+        
+        % Inform the user
+        report(spin_system,[pad('Bloch-Siegert shifts',60) 'enabled']);
+        
+    else
+        
+        % Inform the user
+        report(spin_system,[pad('Bloch-Siegert shifts',60) 'disabled']);
+        
+    end
+    
+else
+    
+    % Default is disabled
+    spin_system.control.bsiegert=false();
+    
+end
+
 % Process sequence timing
 if isfield(control,'pulse_dt')
 
     % Input validation
     if (~isnumeric(control.pulse_dt))||(~isreal(control.pulse_dt))||...
-       (~isrow(control.pulse_dt))||any(control.pulse_dt(:)<=0)
+       (~isrow(control.pulse_dt))||any(~isfinite(control.pulse_dt(:)))||...
+       any(control.pulse_dt(:)<=0)
         error('control.pulse_dt must be a row vector of positive real numbers.');
     end
 
@@ -620,71 +768,6 @@ else
   
 end
 
-% Process carrier operators
-if isfield(control,'carrier_ops')
-
-    % Input validation
-    if ~iscell(control.carrier_ops)
-        error('control.carrier_ops must be a cell array of matrices.');
-    end
-    if numel(control.carrier_ops)~=numel(spin_system.control.operators)
-        error('must have one carrier operator for each control operator.');
-    end
-    for n=1:numel(control.carrier_ops)
-        if (~isnumeric(control.carrier_ops{n}))||...
-           (~ismatrix(control.carrier_ops{n}))||...
-           (size(control.carrier_ops{n},1)~=...
-            size(control.carrier_ops{n},2))
-            error('elements of control.carrier_ops must be square matrices.');
-        end
-        if size(control.carrier_ops{n},1)~=size(spin_system.control.operators{1},1)
-            error('control.carrier_ops must have the same dimension as the control operators.');
-        end
-    end
-    if ~isfield(control,'carrier_frq')
-        error('control.carrier_ops and control.carrier_frq are required simultaneously.');
-    end
-
-    % Inform the user
-    report(spin_system,[pad('Bloch-Siegert shift corrections',60) 'on']);
-
-    % Store the carrier operators
-    spin_system.control.carrier_ops=control.carrier_ops;
-    control=rmfield(control,'carrier_ops');
-
-else
-
-    % Inform the user
-    report(spin_system,[pad('Bloch-Siegert shift corrections',60) 'off']);
-
-end
-
-% Process carrier frequencies
-if isfield(control,'carrier_frq')
-
-    % Input validation
-    if ~isfield(spin_system.control,'carrier_ops')
-        error('control.carrier_ops and control.carrier_frq are required simultaneously.');
-    end
-    if ~isnumeric(control.carrier_frq)
-        error('control.carrier_frq must be a vector.');
-    end
-    if numel(control.carrier_frq)~=numel(spin_system.control.carrier_ops)
-        error('must have one carrier frequency for each carrier operator.');
-    end
-    for n=1:numel(control.carrier_frq)
-        if (~isnumeric(control.carrier_frq(n)))||...
-           (~isreal(control.carrier_frq(n)))
-            error('elements of control.carrier_frq must be real numbers.');
-        end
-    end
-    
-    % Store the carrier frequencies
-    spin_system.control.carrier_frq=control.carrier_frq;
-    control=rmfield(control,'carrier_frq');
-
-end
-
 % Process drift generators
 if isfield(control,'drifts')
 
@@ -728,16 +811,9 @@ if isfield(control,'drifts')
         report(spin_system,[pad('Time-dependent drift generator',60) 'yes']);
     end
 
-    % Put drift generators on pool ValueStore
-    vs_labels=cell([numel(control.drifts) 1]);
-    for n=1:numel(control.drifts)
-        vs_labels{n}=['oc_drift_' num2str(n)];
-    end
-    store=gcp('nocreate').ValueStore;
-    put(store,vs_labels,control.drifts);
-
-    % Only keep the overall drift count
-    spin_system.control.ndrifts=numel(control.drifts); 
+    % Absorb drift generators and their count
+    spin_system.control.drifts=control.drifts;
+    spin_system.control.ndrifts=numel(control.drifts);
     control=rmfield(control,'drifts');
 
 else
@@ -758,6 +834,11 @@ end
 
 % Process freeze mask
 if isfield(control,'freeze')
+
+    % Freeze masks act on time points, waveform bases mix them
+    if isfield(control,'basis')
+        error('control.freeze cannot be combined with control.basis.');
+    end
 
     % Store the mask (validated in fmaxnewton)
     spin_system.control.freeze=logical(control.freeze);
@@ -1101,7 +1182,7 @@ end
 % Process ensemble correlations
 if isfield(control,'ens_corrs')
 
-    % Input validation (more inside ensemble function)
+    % Input validation
     if (~iscell(control.ens_corrs))||(~all(cellfun(@ischar,control.ens_corrs)))
         error('control.ens_corrs must be a cell array of character strings.');
     end
@@ -1110,7 +1191,18 @@ if isfield(control,'ens_corrs')
             error('control.ens_corrs contains an unknown ensemble correlation setting')
         end
     end
-    
+    if ismember('rho_ens',control.ens_corrs)&&(numel(control.ens_corrs)>1)
+        error('rho_ens cannot be combined with other ensemble correlations.');
+    end
+    if ismember('rho_drift',control.ens_corrs)&&...
+       (numel(spin_system.control.rho_init)~=spin_system.control.ndrifts)
+        error('rho_drift correlation needs one state pair per drift.');
+    end
+    if ismember('power_drift',control.ens_corrs)&&...
+       (numel(spin_system.control.pwr_levels)~=spin_system.control.ndrifts)
+        error('power_drift correlation needs one power level per drift.');
+    end
+
     % Absorb ensemble correlations
     spin_system.control.ens_corrs=control.ens_corrs;
     control=rmfield(control,'ens_corrs');
@@ -1164,31 +1256,6 @@ else
     report(spin_system,[pad('Ensemble budget',60) 'all']);
 end
 
-% Parallelisation strategy
-if isfield(control,'parallel')
-
-    % Input validation
-    if ~ischar(control.parallel)
-        error('control.parallel must be a character string.');
-    end
-    if ~ismember(control.parallel,{'ensemble','time'})
-        error('control.parallel must be ''ensemble'' or ''time''.');
-    end
-
-    % Absorb the specification
-    spin_system.control.parallel=control.parallel;
-    control=rmfield(control,'parallel');
-
-else
-
-    % Default is over time steps
-    spin_system.control.parallel='time';
-
-end
-
-% Inform the user
-report(spin_system,[pad('Parallelisation strategy',60) spin_system.control.parallel]);
-                     
 % Plotting options
 if isfield(control,'plotting')
 
@@ -1335,6 +1402,41 @@ if ~isempty(unparsed)
     end
     error('there are problems with the control structure.');
 end
+
+% Build the ensemble case catalog
+[spin_system.control.catalog,...
+ spin_system.control.ens_sizes]=ens_catalog(spin_system.control);
+n_cases=size(spin_system.control.catalog,1);
+
+% Match the state pair list to the correlated ensemble
+if ismember('rho_ens',spin_system.control.ens_corrs)&&...
+   (numel(spin_system.control.rho_init)~=prod(spin_system.control.ens_sizes(2:end)))
+    error('rho_ens correlation needs one state pair per ensemble member.');
+end
+
+% Inform the user
+report(spin_system,[pad('Ensemble cases per objective evaluation',60) ...
+                    int2str(n_cases)]);
+
+% Report the parallel load balance ceiling
+nworkers=poolsize;
+if nworkers>0
+    balance=n_cases/(nworkers*ceil(n_cases/nworkers));
+    report(spin_system,[pad('Parallel pool size, workers',60) ...
+                        int2str(nworkers)]);
+    report(spin_system,[pad('Ensemble parallel efficiency ceiling',60) ...
+                        num2str(balance,'%.3f')]);
+end
+
+% Record the names of the heavy worker-resident invariants
+frozen_fields={'drifts','operators','off_ops','cc_comm','cc_comm_idx','resp_ops'};
+spin_system.control.frozen_fields=frozen_fields(isfield(spin_system.control,frozen_fields));
+
+% Publish the complete frozen problem to the pool, once per problem
+spin_system.control.invariants=parallel.pool.Constant(spin_system);
+
+% Keep heavy invariants off the per-evaluation communication path
+spin_system.control=rmfield(spin_system.control,spin_system.control.frozen_fields);
 
 end
 
