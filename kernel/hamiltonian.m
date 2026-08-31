@@ -599,32 +599,38 @@ clear('D1','D2','nL','nS','opL','opS','isotropic','ist_coeff',...
 % Use the cache record if one exists
 if ismember('ham_cache',spin_system.sys.enable)
 
-    % Combine descriptor, isotopes, basis, and mode information hash
+    % Combine descriptor, operator type, isotopes, basis, and mode information hash
     if isfield(spin_system.inter,'modes')
-        ham_hash=md5_hash({descr,spin_system.comp.iso_hash, ...
+        ham_hash=md5_hash({descr,operator_type,spin_system.comp.iso_hash, ...
                            spin_system.bas.basis_hash,spin_system.inter.modes, ...
                            spin_system.inter.basefrqs});
     else
-        ham_hash=md5_hash({descr,spin_system.comp.iso_hash, ...
+        ham_hash=md5_hash({descr,operator_type,spin_system.comp.iso_hash, ...
                            spin_system.bas.basis_hash});
     end
 
-    % Get ValueStore
+    % Get ValueStore, unless the client has no parallel pool
     if ~isworkernode
-        store=gcp('nocreate').ValueStore; 
+        pool=gcp('nocreate');
+        if isempty(pool)
+            report(spin_system,'no parallel pool, Hamiltonian cache skipped.');
+            store=[];
+        else
+            store=pool.ValueStore;
+        end
     else
         store=getCurrentValueStore(); 
     end
 
     % Try to retrieve the operator from the ValueStore
-    if build_aniso&&isKey(store,[ham_hash ':I'])...
+    if (~isempty(store))&&build_aniso&&isKey(store,[ham_hash ':I'])...
                   &&isKey(store,[ham_hash ':Q'])
 
         % Load I and Q, report success, and return
         I=store([ham_hash ':I']); Q=store([ham_hash ':Q']);
         report(spin_system,'cache record used.'); return;
 
-    elseif (~build_aniso)&&isKey(store,[ham_hash ':I'])
+    elseif (~isempty(store))&&(~build_aniso)&&isKey(store,[ham_hash ':I'])
 
         % Load I, report success, and return
         I=store([ham_hash ':I']); 
@@ -931,9 +937,10 @@ if isfield(spin_system.inter,'modes')
                 omega_ref=abs(carrier_frqs(1));
             end
 
-            % Assign the reference to the member modes
+            % Assign the reference to member modes without declared carriers
             sub_modes=reshape(intersect(members,mode_list),1,[]);
-            mode_refs(sub_modes)=omega_ref;
+            no_carr=sub_modes(modes.carriers(sub_modes)==0);
+            mode_refs(no_carr)=omega_ref;
 
             % Declared carriers must agree with the connected spin carrier
             for k=sub_modes
@@ -978,7 +985,7 @@ if isfield(spin_system.inter,'modes')
                     % Add to the invariant part
                     I=I+omega*operator(spin_system,{'N'},{k},operator_type);
 
-                elseif mode_refs(k)~=0
+                elseif (mode_refs(k)~=0)||(modes.carriers(k)>0)
 
                     % Inform the user
                     report(spin_system,['bosonic mode ' num2str(k) ' is on resonance with its carrier.']);
@@ -1367,12 +1374,12 @@ end
 if ismember('ham_cache',spin_system.sys.enable)
 
     % Update the cache: isotropic part
-    if ~isKey(store,[ham_hash ':I'])
+    if (~isempty(store))&&(~isKey(store,[ham_hash ':I']))
         put(store,{[ham_hash ':I']},{I});
     end
 
     % Update the cache: anisotropic part
-    if build_aniso&&(~isKey(store,[ham_hash ':Q']))
+    if (~isempty(store))&&build_aniso&&(~isKey(store,[ham_hash ':Q']))
         put(store,{[ham_hash ':Q']},{Q});
     end
 

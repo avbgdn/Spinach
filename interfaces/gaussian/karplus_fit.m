@@ -8,14 +8,14 @@
 %               Gaussian logs
 %
 %    atoms    - a cell array of 4-element vectors
-%               specifying atmos making up the dihe-
+%               specifying atoms making up the dihe-
 %               dral angles of interest
 %
 % Outputs:
 %
-%    A,B,C    - coefficients for A+B*cos(phi)+C*cos(phi)^2
+%    A,B,C    - coefficients for A*cos(phi)^2+B*cos(phi)+C
 %
-%    As,Bs,Vs - standard deviations of those coefficients
+%    sA,sB,sC - standard deviations of those coefficients
 %
 % The directory specified in the first argument should contain 
 % a series of Gaussian J-coupling calculation logs that differ 
@@ -77,14 +77,14 @@ cosine_0=ones(size(phi));
 result=[cosine_2' cosine_1' cosine_0']\J';
 A=result(1); B=result(2); C=result(3);
 
-% Vector of squared residuals
-vec_res_sq=@(x)(J'-x(1)*cosine_2'-x(2)*cosine_1'-x(3)*cosine_0').^2;
+% Vector of residuals
+vec_res=@(x)(J'-x(1)*cosine_2'-x(2)*cosine_1'-x(3)*cosine_0');
 
-% Sum of squared residuals 
-sum_res_sq=@(x)sum(vec_res_sq(x));
+% Sum of squared residuals
+sum_res_sq=@(x)sum(vec_res(x).^2);
 
 % Compute the Jacobian at the optimal point
-jac=jacobianest(vec_res_sq,result);
+jac=jacobianest(vec_res,result);
 
 % Get the Studentized residual
 sdr=sqrt(sum_res_sq(result)/(numel(J)-3));
