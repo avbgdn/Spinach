@@ -69,9 +69,9 @@ swhz = swppm * sfO1;
 CSiso=params(1);
 CSaniso=-params(2);
 CSeta=params(3);
-CSAeul_a=params(4);
-CSAeul_b=params(5);
-CSAeul_c=params(6);
+CSAeul_a=(pi/180)*params(4);
+CSAeul_b=(pi/180)*params(5);
+CSAeul_c=(pi/180)*params(6);
 Qcc=params(7)*1.0e6;
 Qeta=params(8);
 lw=13000.0;
@@ -83,9 +83,9 @@ sys.isotopes={'51V'};
 sys.magnet=14.1;
 
 % Chemical shifts
-CSAa=CSiso - 0.5*CSaniso*(CSeta+1.0);
-CSAb=CSiso + 0.5*CSaniso*(CSeta-1.0);
-CSAc=CSiso + CSaniso;
+CSAa=CSiso-0.5*CSaniso*(CSeta+1.0);
+CSAb=CSiso+0.5*CSaniso*(CSeta-1.0);
+CSAc=CSiso+CSaniso;
 inter.zeeman.eigs={[CSAa CSAb CSAc]+456.818}; 
 inter.zeeman.euler={[CSAeul_a CSAeul_b CSAeul_c]};
 
