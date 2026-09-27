@@ -42,8 +42,8 @@ inter.rlx_keep='kite';       % which terms of R survive
 inter.equilibrium='zero';    % where relaxation drives the system
 ```
 
-Formalism restrictions are enforced. `t1_t2`, `redfield`, and
-`naka-zwan` are `sphten-liouv` only. `lindblad`, `nottingham`, `weizmann`, `SRFK`, `SRSK`,
+Formalism restrictions are enforced. `t1_t2`, `redfield`, `naka-zwan`, and
+`SRSK` are `sphten-liouv` only. `lindblad`, `nottingham`, `weizmann`, `SRFK`,
 and IME thermalisation all require Liouville space (`sphten-liouv` or
 `zeeman-liouv`). Only `damp` works in `zeeman-hilb`.
 
@@ -52,7 +52,11 @@ Terms accumulate in a fixed order: `t1_t2`, `redfield`, `naka-zwan`,
 policy applies, then `inter.rlx_keep` truncates, then `damp` is added, then
 thermalisation. Hence `SRSK` reads the superoperator accumulated so far to
 extract source spin T1 and T2 and is useless without a companion theory,
-while `damp` survives even `inter.rlx_keep='diagonal'`.
+while `damp` survives even `inter.rlx_keep='diagonal'` in supported formalisms.
+For damp-only models, use `labframe` retention in cross-formalism calculations
+(as in `thermal_equilibrium_4` and `thermal_equilibrium_5`): the pre-damping
+superoperator is zero, so full retention preserves the same generator without
+requesting the unimplemented Zeeman diagonal policy.
 
 ## Redfield theory
 
@@ -157,6 +161,8 @@ heteronuclear partner using the isotropic part of the coupling tensor
 between them. A source that relaxes too slowly for the treatment to hold
 stops the run with `SRSK theory is not applicable: source spin relaxation is
 too slow`. Contributions are additive and reported in hertz.
+SRSK with `zeeman-liouv` is explicitly refused as not implemented; no
+alternative high-spin Lindblad model is substituted.
 The additive SRSK contribution is built without thermalisation; the chosen
 IME or DiBari-Levitt method is applied once to the accumulated spin relaxation.
 The recursive contribution excludes mode dissipation; the original-temperature
@@ -168,7 +174,7 @@ bosonic dissipators are appended once, after outer spin thermalisation.
 
 | Value | Kept | Notes |
 |---|---|---|
-| `'diagonal'` | Self-relaxation only | Cheapest; no NOE, no cross-correlation. Unit state protected |
+| `'diagonal'` | Self-relaxation only | Cheapest; no NOE, no cross-correlation. Unit state protected in `sphten-liouv`; not implemented in `zeeman-liouv` |
 | `'kite'` | Self-relaxation plus longitudinal cross-relaxation | The NOE-capable minimum and usual liquid-state choice. `sphten-liouv` only |
 | `'secular'` | All terms connecting states of equal Zeeman frequency | Secular with respect to the Zeeman Hamiltonian. `sphten-liouv` only |
 | `'labframe'` | Everything | Only correct for laboratory frame simulations |

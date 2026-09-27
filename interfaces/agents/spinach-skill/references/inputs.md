@@ -302,7 +302,7 @@ hertz, not rad/s, however large the numbers look.
 [sys,inter]=g2spinach(props,particles,references,options)
 ```
 
-- `props` — output of `gparse`, `oparse` or a compatible parser.
+- `props` — output of `gparse`, `oparse` or a compatible parser. EPR import requires explicit HFC source isotopes in `props.isotopes` (Gaussian mass numbers or ORCA isotope strings); missing or malformed provenance for selected, nonempty tensors is rejected before processing or warnings. Whole tensors are scaled by the target/source gyromagnetic-ratio ratio before thresholding and purging, while NMR import is unchanged. Empty tensors and electron-only selections need no provenance; zero-gamma sources are rejected, while direct zero-spin targets produce zero tensors.
 - `particles` — cell array of element/isotope pairs, e.g.
   `{{'C','13C'},{'N','15N'}}`. Including an electron, as in
   `{{'E','E'},{'H','1H'}}`, switches the function into **EPR mode**: chemical
@@ -406,7 +406,11 @@ reduces the affected J-couplings; `options.noshift` behaves as above.
 `[sys,inter]=gissmo2spinach(filename,subsystem)` reads a GISSMO XML file and
 returns a ready-to-use liquid-state NMR spin system. GISSMO supplies only
 chemical shifts, J-couplings, a non-selective line width and the magnet field;
-everything else has to be added by hand.
+everything else has to be added by hand. The linewidth is Lorentzian FWHM
+in hertz, converted to `pi*FWHM` inverse seconds. Its pure damping uses
+`inter.rlx_keep='labframe'`: damping is added after retention, preserving
+the spherical-tensor generator and supporting `zeeman-liouv` without
+requesting unsupported diagonal retention.
 `[sys,inter]=x2spinach(filename,shielding_refs)` reads SpinXML files.
 
 Three importers handle data rather than parameters, and none of them produces

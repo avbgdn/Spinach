@@ -838,9 +838,17 @@ for n=1:numel(spin_system.rlx.theories)
         error('unrecognised relaxation theory specification.');
     end
 end
+if ismember('SRSK',spin_system.rlx.theories)&&...
+   strcmp(spin_system.bas.formalism,'zeeman-liouv')
+    error('SRSK relaxation theory is not implemented for zeeman-liouv formalism.');
+end
 if ismember('redfield',spin_system.rlx.theories)&&...
    ismember('naka-zwan',spin_system.rlx.theories)
     error('redfield and naka-zwan are alternative evaluations of the same kernel, specify one.');
+end
+if strcmp(spin_system.bas.formalism,'zeeman-liouv')&&...
+   strcmp(spin_system.rlx.keep,'diagonal')
+    error('diagonal relaxation retention is not implemented for zeeman-liouv formalism.');
 end
 if ( ismember('t1_t2',spin_system.rlx.theories))&&...
    (~ismember(spin_system.bas.formalism,{'sphten-liouv'}))
