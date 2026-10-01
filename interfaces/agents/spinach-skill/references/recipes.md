@@ -49,6 +49,10 @@ calculation, never from plausibility.
 | `standard_systems` | Data only: shared Gaussian, ORCA, CASTEP, SpinXML inputs |
 | `visualisation` | 3D rendering of shielding, EFG and hyperfine tensors |
 
+## Optimal-control case studies
+
+For deposited BEBOP/BIBOP and universal-rotation waveforms with offset–RF maps, use `examples/optimal_control/case_studies/Kobzar_JMR_2004/bebop_bibop_profiles.m` and `examples/optimal_control/case_studies/Kobzar_JMR_2012/ur180_profiles.m`. For a physical inverse-radius RF distribution, use `examples/optimal_control/case_studies/Skinner_JMR_2011/toroid_oc_optim.m` with its numerically simulated rectangular-pulse benchmark in the same folder. The retained `Tosner_JMR_2009` scripts are illustrative variants, not numerical reproductions.
+
 ## Liquid-state NMR, one dimension
 
 `nmr_liquids/pa_strychnine.m` is the reference for a real molecule: spin system
@@ -155,6 +159,27 @@ Cross polarisation is `cp_powder_static_nh.m` and
 `cp_contact_mas_nh_fplanck.m`; recoupling is `redor_curve.m` and
 `pdsd_simple.m`.
 
+For a direct single-crystal MAS route check, run
+`examples/fundamentals/mas_fplanck_slices.m`. It compares midpoint-sliced
+`rotor_stack` evolution against `singlerot` in Fokker–Planck Liouville
+space while independently refining slice count and rotor rank. The cases
+are phase-sensitive `13C` L+ to Lz transfer under RF and the central
+transition of strongly quadrupolar `27Al` with third-order rotating-frame
+correction. For a positive rotor rate the FP phase delta moves toward
+decreasing phase; start sliced sampling at the negative half-step and
+visit rotor-stack phases in reverse order. The test asserts agreement of
+normalised complex signals and checks that the third-order term is nonzero. This is not a test of powder averaging, the complete
+satellite manifold, or optimal-control gradients.
+
+For a powder-average route check, run
+`examples/fundamentals/mas_fplanck_powder.m`. It uses the same weighted
+Lebedev crystallite grid for both routes, averaging rotor start phase
+explicitly in the sliced route and through the uniform FP phase state in
+`singlerot`. Evolve exactly one full period when visiting an entire
+rotor stack; refine FP rank, midpoint slices, and rotor-phase quadrature
+separately. The finite-grid CSA test does not cover quadrupolar powder
+satellites or optimal-control gradients.
+
 ## Quadrupolar nuclei and NQR
 
 Quadrupolar coupling is a self-coupling on the diagonal of the coupling cell
@@ -238,6 +263,15 @@ the time step at the fastest rate, `max_rank` of about `1/(2*abs(rate)*timestep)
 beyond the time step, a coarser one loses phase resolution; at slower rates
 consecutive steps reuse a stack element); the carrier step must be finer than
 the narrowest line (0.5 MHz for the 2 MHz wide central line).
+
+For Liouville MAS EPR, use `echo_sweep` with `singlerot` in `sphten-liouv`
+or `zeeman-liouv`. The context supplies the rotor-augmented generator and
+relaxation operators; pulses and the interpulse delay propagate directly,
+without a Hamiltonian rotor stack or `nphases`. `timestep` samples only the
+finite echo detection window. Retain `max_rank` for Fokker-Planck rotor
+resolution. With `state()` inputs, spin-tensor amplitudes have their own
+normalisation: compare spectral shapes or use `zeeman-liouv` for amplitudes
+matched to `zeeman-hilb`.
 
 ## DEER
 
