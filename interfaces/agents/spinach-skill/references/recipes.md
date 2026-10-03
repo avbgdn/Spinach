@@ -1,5 +1,33 @@
 # Starting points by physical problem
 
+## Contents
+
+- [Index of `examples/`](#index-of-examples)
+- [Optimal-control case studies](#optimal-control-case-studies)
+- [Liquid-state NMR, one dimension](#liquid-state-nmr-one-dimension)
+- [Liquid-state NMR, homonuclear 2D](#liquid-state-nmr-homonuclear-2d)
+- [Liquid-state NMR, heteronuclear 2D](#liquid-state-nmr-heteronuclear-2d)
+- [Proteins and nucleic acids](#proteins-and-nucleic-acids)
+- [Solid-state NMR, static powder and MAS](#solid-state-nmr-static-powder-and-mas)
+- [Quadrupolar nuclei and NQR](#quadrupolar-nuclei-and-nqr)
+- [EPR, field-swept and CW](#epr-field-swept-and-cw)
+- [EPR, pulsed: ESEEM, HYSCORE, ENDOR](#epr-pulsed-eseem-hyscore-endor)
+- [DEER](#deer)
+- [DNP](#dnp)
+- [PHIP and SABRE](#phip-and-sabre)
+- [Radical pairs, magnetic field effects, CIDNP](#radical-pairs-magnetic-field-effects-cidnp)
+- [Relaxation studies](#relaxation-studies)
+- [Chemical kinetics and exchange](#chemical-kinetics-and-exchange)
+- [MRI, imaging, flow and diffusion](#mri-imaging-flow-and-diffusion)
+- [Optimal control](#optimal-control)
+- [Fitting to experimental data](#fitting-to-experimental-data)
+- [Singlet states](#singlet-states)
+- [Zero-field and low-field NMR](#zero-field-and-low-field-nmr)
+- [Paramagnetic NMR and partial alignment](#paramagnetic-nmr-and-partial-alignment)
+- [Giant spin, lanthanides and molecular magnets](#giant-spin-lanthanides-and-molecular-magnets)
+- [Tensor visualisation, quantum technology, fundamentals](#tensor-visualisation-quantum-technology-fundamentals)
+- [Exporting NMR and EPR data](#exporting-nmr-and-epr-data)
+
 Paths are relative to the Spinach repository root. Every simulation follows the
 seven-part shape given in `SKILL.md`; what changes between problem classes is
 the context, the assumptions string, the basis, the pulse sequence, and the
@@ -673,3 +701,40 @@ hand instead of using a context, and the symmetry and state-space restriction
 files for basis-truncation behaviour. `extremes/high_symmetry_1.m` needs tens
 of cores and over a hundred gigabytes; `nmr_stochastic/snmr_strychnine.m`
 requires a GPU.
+
+## Exporting NMR and EPR data
+
+For native Spinach outputs, prefer `jcamp_nmr(spin_system,parameters,signal,domains,info)`
+for 1D/2D/3D NMR arrays and named quadrature structures, or
+`jcamp_epr(spin_system,parameters,signal,kind,info)` for electron acquisitions,
+processed spectra, returned field sweeps, and ENDOR RF scans. NMR domains are
+in physical F1/F2/F3 order; 2D arrays are [F2,F1], while 3D arrays are [F1,F2,F3].
+No phase cycling or quadrature recombination is performed. Frequency axes use
+`ft_axis` in Hz; NMR observation frequencies come from nuclei and the field.
+For non-uniform EMR times or custom maps, use `jcamp_signal` with explicit
+axis columns in MATLAB array order. See the [wrapper examples](../../../jcamp/README.md#export-directly-from-spinach-results)
+for required ownership and method metadata, units, and native row scan shapes.
+
+Use `text=jcamp_export(data)` in `interfaces/jcamp/` for JCAMP-DX export.
+Its [documented structure](../../../jcamp/README.md) supplies ownership, typed
+blocks, metadata, and either explicit traces, general NTUPLES pages, or peaks.
+Complex traces retain separate real/imaginary channels; multidimensional and
+hypercomplex data require explicit page coordinates and component names.
+Multiple datasets become a LINK file. Set `data.filename` to also write the
+returned text. No FFT, referencing, normalisation, unit conversion, or
+integer quantisation is performed. NMR observation frequency is in MHz; EMR
+microwave frequency is in Hz. The caller supplies the experiment-specific
+metadata, including pulse sequences and quadrature conventions. Tabulated
+abscissa units must match the declared NMR/EMR type; NMR delay text must
+contain the finite real numeric pair `(RD, ID)`. Multiplicity applies only to NMR
+peaks. Axis units and core EMR methods are validated; NMR 5.01 permits
+`MAGNITUDE` and `POWER` alongside `ARBITRARY UNITS`, without applying a
+transform. Add a PAGE variable when replicate identity must be explicit to
+coordinate-keyed readers.
+
+Supply `.SIMULATION SOURCE` and `.SIMULATION PARAMETERS` as non-empty ASCII
+text (row strings or cell vectors of lines), not numeric arrays.
+
+Complex NMR quadratures use `ARBITRARY UNITS`; magnitude/power data must
+be real and already transformed. NMR assignments may omit heights and method
+comments; widths require a method description.
