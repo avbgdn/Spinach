@@ -43,6 +43,13 @@ independent copies or paraphrases in this skill or its references.
    the sibling `spinach-knowledge` tree for function-level explanations, then
    confirm signatures, units, and restrictions in the actual `.m` files.
 
+For protein file import, use `protein` with the PDB, BMRB, and requested CSA
+inputs. `read_bmrb` accepts tagged NMR-STAR 2.1/3.x files as well as legacy
+tables; do not strip metadata or assume fixed column positions. Check residue
+numbering and the choice of chemical shift list or entity separately: the
+four-output reader returns all lists and cannot choose a chain. See the
+corresponding `spinach-knowledge/interfaces/pdb_bmrb/` entries.
+
 ## Choose a route
 
 | Task or uncertainty | Read |
@@ -107,3 +114,21 @@ account of the physical assumptions, checkout/version, exact checks run, and
 measured outcome. Distinguish executed results from static review or prediction.
 If MATLAB, data, or resources are unavailable, name the blocker and mark the
 corresponding results unvalidated; never manufacture a success marker.
+
+## CUDA sparse-product regression
+
+`compile_mex()` also builds the CUDA sparse-product gateway using `mexcuda`
+and the CUDA driver library with MATLAB R2026b or later and a supported
+host C++ compiler. `mexcuda` can use MATLAB's bundled NVIDIA compiler;
+a standalone CUDA toolkit is not required. Windows adds `CUDA_PATH/lib/x64`
+before the driver link when configured. Windows, Linux, and macOS routes are retained; the host must
+still provide a working CUDA toolchain. MATLAB's specific macOS CUDA-unavailable
+error is reported without aborting the C++ builds; other build errors propagate.
+Modern MATLAB does not provide macOS CUDA support. Older releases retain five C++ builds
+and skip the R2026b-layout CUDA target.
+
+Run `run_test('kernel/cuda_product')` from the regression suite to compare the
+gateway directly with CPU products across random real and complex matrices.
+Read its messages: missing GPU/gateway coverage and the specific
+`MATLAB:mex:ErrInvalidMEXFile` loader error are reported as skipped, not as
+numerical validation. All other CUDA errors and wrong results remain failures.
