@@ -23,11 +23,10 @@
 % Note: the Schulten-Gordon three-term recurrence is combined with bounded
 %       Luscombe-Luban ratios in the nonclassical tails. All intermediate
 %       operations use native doubles; coefficients and iterates retain
-%       roundoff corrections in a second double. No Java or symbolic toolbox
+%       roundoff corrections in a second double. No symbolic toolbox
 %       is used. The shortest magnetic-index family is normalised using
 %       3j orthogonality. This choice avoids the j=0 recurrence singularity.
 %       The existing input ceiling is L,L1,L2<=1e4.
-%       A faster low-rank implementation is available in cg_fast.m.
 %
 % References: https://doi.org/10.1063/1.522426
 %             https://doi.org/10.1103/PhysRevE.57.7274

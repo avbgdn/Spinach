@@ -126,7 +126,7 @@ switch spin_system.bas.formalism
         for n=1:size(descriptors,1)
             for k=find(descriptors(n,:))
                 mult=spin_system.comp.mults(k); index=descriptors(n,k)+1;
-                coeffs(n)=coeffs(n)*spin_system.bas.lpst{mult}(index,1,index);
+                coeffs(n)=coeffs(n)*spin_system.bas.unit_norm{mult}(index);
             end
         end
 
