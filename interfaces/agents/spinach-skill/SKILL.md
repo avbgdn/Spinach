@@ -1,7 +1,7 @@
 ---
 name: spinach-skill
 description: Sets up, runs, validates, debugs, and extends MATLAB Spinach simulations for NMR, EPR, DNP, MRI, relaxation, and optimal control. Use for Spinach scripts, pulse sequences, simulation results, basis/context choices, or repository changes. Not for unrelated MATLAB work or another package unless Spinach is part of the task.
-compatibility: Requires a local Spinach checkout and MATLAB supported by that checkout; use MATLAB R2026a or later for the current repository. Runtime requirements are checked by fix_path. Source-only review is possible without MATLAB.
+compatibility: Requires a local Spinach checkout and MATLAB supported by that checkout; use MATLAB R2026b or later for the current repository. Runtime requirements are checked by fix_path. Source-only review is possible without MATLAB.
 ---
 
 # Spinach
@@ -133,9 +133,17 @@ error is reported without aborting the C++ builds; other build errors propagate.
 Modern MATLAB does not provide macOS CUDA support. Older releases retain five C++ builds
 and skip the R2026b-layout CUDA target.
 
+The shipped Linux and Windows gateways are built with R2026b and CUDA 13
+for compute capability 7.5 or later. Direct gateway and wrapper arithmetic
+are validated on Linux H200 and Windows A800 without an external CUDA runtime.
+Missing or unloadable binaries retain native GPU multiplication; computation
+and storage-layout errors remain errors. When MATLAB cannot use any GPU,
+`create()` reports the condition and removes optional GPU acceleration, leaving
+native CPU arithmetic. Pool startup retains MATLAB's default port settings.
+
 Run `run_test('kernel/cuda_product')` from the regression suite to compare the
 gateway directly with CPU products across random real and complex matrices.
-Read its messages: missing GPU/gateway coverage and the specific
+Read its messages: GPUs below compute capability 7.5, missing GPU/gateway coverage, and the specific
 `MATLAB:mex:ErrInvalidMEXFile` loader error are reported as skipped, not as
 numerical validation. All other CUDA errors and wrong results remain failures.
 
