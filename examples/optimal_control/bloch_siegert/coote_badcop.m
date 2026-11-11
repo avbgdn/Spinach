@@ -1,8 +1,7 @@
 % Reproduction of BADCOP-style selective decoupling logic
 % from (https://doi.org/10.1038/s41467-018-05400-4) with
 % Bloch-Siegert corrections enabled in the optimiser and
-% simulator. BADCOP1, BADCOP2, and BADCOP3 are designed
-% and validated. Durations, RF ceilings, the contraction
+% simulator. Durations, RF ceilings, the contraction
 % factor, and the inversion bands are those of Table 1
 % and the text of the paper, and the 53.2 ppm carrier is
 % the one stated in Supplementary Figure 5. Only BADCOP2
@@ -55,9 +54,14 @@ co_hz=ppm2hz(co_ppm-carrier_ppm,sys.magnet,'13C');
 
 % Build all three variants from Table 1
 variants={...
-    struct('name','BADCOP1','rf_hz',5.94e3,'cb_inv_ppm',[5 37],'cb_prs',false),...
+    struct('name','BADCOP1','rf_hz',5.94e3,'cb_inv_ppm',[5  37],'cb_prs',false),...
     struct('name','BADCOP2','rf_hz',4.87e3,'cb_inv_ppm',[28 35],'cb_prs',true),...
     struct('name','BADCOP3','rf_hz',7.22e3,'cb_inv_ppm',[10 45],'cb_prs',true)};
+
+
+% Get the figure going
+kfigure; scale_figure([1.0 2.0]);
+letters={'B','C','D'};
 
 % Design and evaluate each variant
 for k=1:numel(variants)
@@ -123,7 +127,7 @@ for k=1:numel(variants)
     control.penalties={'NS'};
     control.p_weights=0.01;
     control.ens_corrs={'rho_ens'};
-    control.plotting={'xy_controls'};
+    control.plotting={};
 
     % Enable Bloch-Siegert corrections
     control.bsiegert=true();
@@ -153,7 +157,7 @@ for k=1:numel(variants)
     eval_hz=ppm2hz(eval_ppm-carrier_ppm,sys.magnet,'13C');
     mz_bs=zeros(size(eval_hz));
     mz_nobs=zeros(size(eval_hz));
-    for n=1:numel(eval_hz)
+    parfor n=1:numel(eval_hz) %#ok<*PFBNS>
 
         % Add the offset term
         Hn=D+2*pi*eval_hz(n)*Lz;
@@ -163,7 +167,7 @@ for k=1:numel(variants)
         
         % Run with the Bloch-Siegert physics present
         rho=shaped_pulse_xy(ss_bs,Hn,controls_aug,pulse_aug,...
-                            control.pulse_dt,Iz,'expv-pwc');
+                            control.pulse_dt,Iz,'expv-pwc'); 
 
         % Get the fidelity
         mz_bs(n)=real(Iz'*rho);
@@ -181,15 +185,28 @@ for k=1:numel(variants)
     end
 
     % Plot the inversion profile
-    kfigure;
-    plot(eval_ppm,mz_bs,'LineWidth',1.5); hold on;
-    plot(eval_ppm,mz_nobs,'LineWidth',1.5); kgrid
-    xline(variants{k}.cb_inv_ppm(1),'k--','LineWidth',1.0);
-    xline(variants{k}.cb_inv_ppm(2),'k--','LineWidth',1.0);
+    subplot(numel(variants),1,k);
+    plot(eval_ppm,mz_bs,'--'); hold on;
+    plot(eval_ppm,mz_nobs); kgrid;
+
+    % Shade chemical shifts without destination states
+    if variants{k}.cb_prs
+        xregion(eval_ppm(1),cb_prs_ppm(1));
+        xregion(cb_prs_ppm(end),co_ppm(1));
+    else
+        xregion(eval_ppm(1),cb_inv_ppm(1));
+        xregion(cb_inv_ppm(end),ca_ppm(1));
+        xregion(ca_ppm(end),co_ppm(1));
+    end
+    xregion(co_ppm(end),eval_ppm(end));
+
+    % Label the panel
     kxlabel('$^{13}$C chemical shift / ppm'); 
-    kylabel('Final M$_Z$'); ktitle([variants{k}.name ' profile']);
-    klegend({'BSS on','BSS off'},'Location','Best'); 
-    set(gca,'XDir','Reverse'); drawnow;
+    kylabel('Final $M_\textnormal{Z}$');  
+    klegend({'BSS applied',...
+             'BSS ignored'},'Location','Best');
+    set(gca,'XDir','Reverse'); ylim padded;
+    kletter(letters{k}); drawnow;
 
 end
 
