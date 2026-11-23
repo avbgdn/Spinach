@@ -20,11 +20,14 @@ sys.isotopes={'13C','13C','13C'};
 sys.magnet=0;
 sys.output='hush';
 sys.disable={'hygiene'};
-sys.parallel={'local',1};
+sys.parallel={'processes',1};
 inter.zeeman.matrix={zeros(3),zeros(3),zeros(3)};
 inter.coupling.matrix=cell(3);
 inter.coupling.matrix{1,2}=diag([0 0 17]);
 inter.coupling.matrix{1,3}=diag([0 0 29]);
+sys.tols.cce_atol=1e-8;
+sys.tols.cce_rtol=1e-8;
+sys.tols.cce_mem=2^26;
 spin_system=create(sys,inter);
 p.observed=1;
 p.times=[0 0.001 0.004];
@@ -32,11 +35,9 @@ p.orientation=[0 0 0];
 p.transition=struct('spins',1,'alpha',[1;0],'beta',[0;1]);
 p.cce=struct('approximation','projected','bath_spins',[2 3],...
              'expansion','standard','order',2,'interaction_cutoff',Inf,...
-             'graph',struct('mode','complete','score','coupling_norm'),...
-             'meanfield','none','averaging','after_expansion',...
-             'bath_state',struct('mode','sampled','basis','uniform','probabilities','uniform',...
-                                 'samples',4,'seed',193),...
-             'numerics',struct('atol',1e-8,'rtol',1e-8,'max_memory_bytes',2^26));
+             'meanfield','none','averaging','after_expansion');
+p.bath_samples=4;
+p.bath_seed=193;
 
 % Save a complete calculation and simulate a durable partial interruption
 folder=tempname;
@@ -44,7 +45,6 @@ mkdir(folder);
 cleanup=onCleanup(@() rmdir(folder,'s'));
 filename=fullfile(folder,'checkpoint.mat');
 p.cce.checkpoint=struct('file',filename,'resume',false);
-p.cce.parallel=struct('mode','serial','batch_size',3,'max_tasks',16);
 [uninterrupted,uninterrupted_data]=clexpn(spin_system,@free_evolution,p,'labframe');
 loaded=load(filename,'state');
 state=loaded.state;
@@ -59,8 +59,8 @@ result=test_close(result,'partial reduced restart',resumed,uninterrupted,0,0,...
                   'Restart repeats the same fixed-order reduction.');
 loaded=load(filename,'state');
 state=loaded.state;
-result=test_true(result,'completed bitmap',all(state.completed),...
-                 'All sixteen tasks are marked complete after resume.');
+result=test_true(result,'completed bitmap',numel(state.completed)==12&&all(state.completed),...
+                 'All twelve tasks are marked complete after resume.');
 
 % Only a retained physical orientation contributes to its grid checkpoint
 quadrature=rmfield(p,'orientation');
@@ -87,9 +87,9 @@ result=test_true(result,'Retained orientation checkpoint identity',refused,...
                  'A different physical rotation must not resume the previous orientation.');
 
 % Resource availability must not invalidate an otherwise identical physical ledger
-resized=p;
-resized.cce.numerics.max_memory_bytes=2*p.cce.numerics.max_memory_bytes;
-[resource_resumed,resource_data]=clexpn(spin_system,@free_evolution,resized,'labframe');
+resized=spin_system;
+resized.tols.cce_mem=2*spin_system.tols.cce_mem;
+[resource_resumed,resource_data]=clexpn(resized,@free_evolution,p,'labframe');
 result=test_true(result,'Resource-independent checkpoint identity',...
                  isequaln(resource_data.raw,uninterrupted_data.raw),...
                  'Changing only the memory allowance preserves cached physical records.');
@@ -146,10 +146,12 @@ q=p;
 q.cce=rmfield(q.cce,'checkpoint');
 [fresh,~]=clexpn(changed_system,@free_evolution,q,'labframe');
 tolerance_difference=max(abs(uninterrupted(:)-fresh(:)));
-original_model=cce_compile(spin_system,q,'labframe');
-changed_model=cce_compile(changed_system,q,'labframe');
+original_model_p=cce_options(spin_system,q,@cce_compile,'labframe');
+original_model=cce_compile(spin_system,original_model_p,'labframe');
+changed_model_p=cce_options(changed_system,q,@cce_compile,'labframe');
+changed_model=cce_compile(changed_system,changed_model_p,'labframe');
 result=test_true(result,'Spinach tolerance result fingerprint',...
-                 ~strcmp(original_model.source_hash,changed_model.source_hash),...
+                 ~strcmp(original_model.cce.source_hash,changed_model.cce.source_hash),...
                  'The public model fingerprint must distinguish tolerance-dependent Hamiltonians.');
 result=test_true(result,'Interaction cutoff changes propagation',tolerance_difference>1e-4,...
                  'The fixture must independently demonstrate that the changed tolerance affects results.');
@@ -177,7 +179,7 @@ catch exception
 end
 result=test_true(result,'model identity',refused,'Physical tensors are hashed.');
 changed=p;
-changed.cce.bath_state.seed=194;
+changed.bath_seed=194;
 refused=false;
 try
     clexpn(spin_system,@free_evolution,changed,'labframe');
@@ -266,19 +268,21 @@ result=test_true(result,'actual save failure integrity',refused&&isequaln(loaded
                  'A real filesystem write failure leaves the known-good target byte content intact.');
 
 % Verify execution settings do not falsely change physical restart identity
-p.cce.parallel.batch_size=1;
-p.cce.parallel.mode='clusters';
+delete(gcp('nocreate'));
+sys.parallel={'processes',2};
+create(sys,inter);
 changed=clexpn(spin_system,@free_evolution,p,'labframe');
 result=test_close(result,'execution-neutral restart',changed,uninterrupted,0,0,...
-                  'Worker batching and serial/parallel selection are not physics.');
-fprintf('CCE checkpoint: %d tasks, 4 preserved, 12 resumed; discrepancy %.3g.\n',...
+                  'Worker count is not part of the physical restart identity.');
+fprintf('CCE checkpoint: %d tasks, 4 preserved, 8 resumed; discrepancy %.3g.\n',...
         numel(state.completed),max(abs(resumed-uninterrupted),[],'all'));
 
 % Reject unsupported checkpoint ownership before direct evaluator work
 plain=p;
-plain.cce=rmfield(plain.cce,{'checkpoint','parallel'});
-plain.cce.bath_state=struct('mode','mixed_product');
-model=cce_compile(spin_system,plain,'labframe');
+plain=rmfield(plain,{'bath_samples','bath_seed'});
+plain.cce=rmfield(plain.cce,'checkpoint');
+model_p=cce_options(spin_system,plain,@cce_compile,'labframe');
+model=cce_compile(spin_system,model_p,'labframe');
 ensemble=uninterrupted_data.ensemble;
 cluster=struct('id',1,'sites',2);
 for method={'cce','gcce','mecce','megcce','noise'}
@@ -291,19 +295,16 @@ for method={'cce','gcce','mecce','megcce','noise'}
     end
     if any(strcmp(method{1},{'mecce','megcce'}))
         direct.bath_jumps=struct('support',2,'rate',2,'operator',[0 1;0 0]);
-        direct.cce.basis.formalism='zeeman-liouv';
     elseif strcmp(method{1},'noise')
         pulse_sequence=@noise_correlation;
         direct.cce.approximation='generalized';
         direct.noise=struct('ordering','ordered','connected',false,'manifold','bath_only',...
                             'descriptors',struct('spins',2,'operators','Lz','coefficient',1));
     end
-    schedule=struct('pulse_sequence',pulse_sequence,'contract',cce_capabilities(pulse_sequence));
-    evaluator=schedule.contract.evaluator;
     direct.cce.checkpoint=struct('file',fullfile(folder,'direct.mat'),'resume',true);
     refused=false;
     try
-        evaluator(model,cluster,ensemble.spin_config(1),schedule,direct);
+        cce_evaluate(model,cluster,ensemble.spin_config(1),pulse_sequence,direct);
     catch exception
         refused=strcmp(exception.identifier,'cce_options:checkpoint');
     end
@@ -313,18 +314,17 @@ end
 
 % Reject interlaced checkpoint writes and resumes at both public entry points
 interlaced=p;
-interlaced.cce.bath_state.mode='interlaced';
 interlaced.cce.interlaced=struct('max_states',16,'reference_state',1);
-model=cce_compile(spin_system,plain,'labframe');
+model_p=cce_options(spin_system,plain,@cce_compile,'labframe');
+model=cce_compile(spin_system,model_p,'labframe');
 ensemble=uninterrupted_data.ensemble;
-schedule=struct('pulse_sequence',@free_evolution,'contract',cce_capabilities(@free_evolution));
 for resume=[false true]
     interlaced.cce.checkpoint=struct('file',fullfile(folder,'interlaced.mat'),'resume',resume);
     for direct=[false true]
         refused=false;
         try
             if direct
-                cce_interlace(model,cluster,ensemble,schedule,interlaced,schedule.contract.evaluator);
+                cce_interlace(model,cluster,[],ensemble,@free_evolution,interlaced);
             else
                 clexpn(spin_system,@free_evolution,interlaced,'labframe');
             end
@@ -380,7 +380,6 @@ for method={'cce','gcce','mecce','megcce','noise','controls'}
         request.times=[0 0.002 0.004];
     elseif any(strcmp(method{1},{'mecce','megcce'}))
         request.bath_jumps=struct('support',2,'rate',2,'operator',[0 1;0 0]);
-        request.cce.basis.formalism='zeeman-liouv';
     elseif strcmp(method{1},'noise')
         pulse_sequence=@noise_correlation;
         request.cce.approximation='generalized';
@@ -388,7 +387,9 @@ for method={'cce','gcce','mecce','megcce','noise','controls'}
                              'descriptors',struct('spins',2,'operators','Lz','coefficient',1));
     end
     request.cce.checkpoint=struct('file',fullfile(folder,[method{1} '.mat']),'resume',false);
-    request.cce.parallel=struct('mode','serial','batch_size',2,'max_tasks',4);
+    delete(gcp('nocreate'));
+    sys.parallel={'processes',1};
+    create(sys,inter);
     [complete,complete_data]=clexpn(spin_system,pulse_sequence,request,'labframe');
     saved=load(request.cce.checkpoint.file,'state');
     partial=saved.state;
@@ -396,7 +397,9 @@ for method={'cce','gcce','mecce','megcce','noise','controls'}
     partial.records(2:end)={[]};
     cce_checkpoint(request.cce.checkpoint.file,'write',partial);
     request.cce.checkpoint.resume=true;
-    request.cce.parallel.mode='clusters';
+    delete(gcp('nocreate'));
+    sys.parallel={'processes',2};
+    create(sys,inter);
     [restarted,restarted_data]=clexpn(spin_system,pulse_sequence,request,'labframe');
     result=test_close(result,[method{1} ' partial serial parallel restart'],...
                       restarted,complete,0,0,...
@@ -454,7 +457,6 @@ for method={'cce','mecce','noise','controls'}
         request.times=[0 0.002 0.004];
     elseif any(strcmp(method{1},{'mecce','megcce'}))
         request.bath_jumps=struct('support',2,'rate',2,'operator',[0 1;0 0]);
-        request.cce.basis.formalism='zeeman-liouv';
     elseif strcmp(method{1},'noise')
         pulse_sequence=@noise_correlation;
         request.cce.approximation='generalized';
@@ -469,10 +471,12 @@ for method={'cce','mecce','noise','controls'}
     cold=clexpn(changed_system,pulse_sequence,request,'labframe');
     result=test_close(result,[method{1} ' successive cleared-function identity'],warm,cold,0,0,...
                       'Changing the physical model must not reuse any previous physical result.');
-    before_model=cce_compile(spin_system,request,'labframe');
-    after_model=cce_compile(changed_system,request,'labframe');
+    before_model_p=cce_options(spin_system,request,@cce_compile,'labframe');
+    before_model=cce_compile(spin_system,before_model_p,'labframe');
+    after_model_p=cce_options(changed_system,request,@cce_compile,'labframe');
+    after_model=cce_compile(changed_system,after_model_p,'labframe');
     result=test_true(result,[method{1} ' physical model fingerprint'],...
-                     ~strcmp(before_model.source_hash,after_model.source_hash),...
+                     ~strcmp(before_model.cce.source_hash,after_model.cce.source_hash),...
                      'Different physical interactions require distinct model fingerprints.');
 end
 

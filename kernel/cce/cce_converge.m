@@ -3,9 +3,9 @@
 % [answer,diagnostics]=cce_converge(spin_system,parameters,pulse_sequence,assumptions)
 %
 % parameters.cce.convergence.ladders has field and values (cell row).
-% Supported fields: cce.order, cce.bath_spins, cce.graph.threshold,
-% cce.graph.radius, cce.bath_state.samples, times. Each ladder refines the
-% baseline independently; no simultaneous ladder changes are allowed.
+% Supported fields: cce.order, cce.bath_spins, bath_samples, times. Each
+% ladder refines the baseline independently; no simultaneous ladder changes
+% are allowed.
 % parameters.cce.convergence.atol/rtol are required scalar observable tolerances;
 % max_work is a positive integer cap on complete clexpn evaluations. A time
 % ladder must contain every preceding time exactly (no interpolation).
@@ -46,8 +46,7 @@ baseline=parameters;
 baseline.cce=rmfield(baseline.cce,'convergence');
 [answer,diagnostics]=clexpn(spin_system,pulse_sequence,baseline,assumptions);
 work=1;
-model=struct('multiplicities',spin_system.comp.mults,'observed_ids',parameters.observed);
-audit=cce_diagnostics(model,diagnostics.raw,diagnostics.reduction,diagnostics.parameters);
+audit=cce_diagnostics(spin_system,diagnostics.raw,diagnostics.reduction,diagnostics.parameters);
 capacity=sum(arrayfun(@(x) numel(x.values)-1,control.ladders));
 if isfield(control,'checks')
     capacity=capacity+numel(control.checks);
@@ -78,7 +77,7 @@ for k=1:numel(control.ladders)
         end
         [current,details]=clexpn(spin_system,pulse_sequence,trial,assumptions);
         work=work+1;
-        current_audit=cce_diagnostics(model,details.raw,details.reduction,details.parameters);
+        current_audit=cce_diagnostics(spin_system,details.raw,details.reduction,details.parameters);
         entry=compare(answer,diagnostics,current,details,audit,current_audit,control,ladder.field,j);
         recorded=recorded+1;
         report(recorded)=entry;
@@ -113,7 +112,7 @@ if isfield(control,'checks')&&~limited
         end
         [current,details]=clexpn(spin_system,pulse_sequence,trial,assumptions);
         work=work+1;
-        current_audit=cce_diagnostics(model,details.raw,details.reduction,details.parameters);
+        current_audit=cce_diagnostics(spin_system,details.raw,details.reduction,details.parameters);
         entry=compare(answer,diagnostics,current,details,audit,current_audit,control,'independent_check',k);
         recorded=recorded+1;
         report(recorded)=entry;
@@ -209,7 +208,7 @@ end
 if numel(unique({control.ladders.field}))~=numel(control.ladders)
     error('cce_converge:input','Each approximation may have only one independent ladder.');
 end
-allowed={'cce.order','cce.bath_spins','cce.graph.threshold','cce.graph.radius','cce.bath_state.samples','times'};
+allowed={'cce.order','cce.bath_spins','bath_samples','times'};
 for k=1:numel(control.ladders)
     ladder=control.ladders(k);
     if ~ischar(ladder.field)||~ismember(ladder.field,allowed)||...
@@ -244,13 +243,13 @@ if isfield(control,'checks')&&(~iscell(control.checks)||...
    ~all(cellfun(@(x) isstruct(x)&&isscalar(x),control.checks)))
     error('cce_converge:input','Independent checks must be a cell of parameter override structures.');
 end
-if any(strcmp({control.ladders.field},'cce.bath_state.samples'))
+if any(strcmp({control.ladders.field},'bath_samples'))
     held_out=false;
     if isfield(control,'checks')
         for k=1:numel(control.checks)
             check=control.checks{k};
-            held_out=held_out||(isfield(check,'cce')&&isfield(check.cce,'bath_state')&&isfield(check.cce.bath_state,'seed')&&...
-                check.cce.bath_state.seed~=parameters.cce.bath_state.seed);
+            held_out=held_out||(isfield(check,'bath_seed')&&...
+                                check.bath_seed~=parameters.bath_seed);
         end
     end
     if ~held_out

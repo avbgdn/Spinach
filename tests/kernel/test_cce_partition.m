@@ -21,6 +21,9 @@ sys.magnet=0;
 sys.output='hush';
 sys.disable={'hygiene'};
 sys.parallel={'local',1};
+sys.tols.cce_atol=1e-10;
+sys.tols.cce_rtol=1e-10;
+sys.tols.cce_mem=2^28;
 inter.zeeman.matrix={zeros(3),diag([0 0 120]),diag([0 0 180]),diag([0 0 270])};
 inter.zeeman.units='Hz';
 inter.coordinates={[0 0 0],[1 0 0],[2 0 0],[4 0 0]};
@@ -46,7 +49,7 @@ for j=1:4
 end
 
 parameters=choices();
-[parameters,~]=cce_options(spin_system,parameters,@hahn_echo,'labframe');
+parameters=cce_options(spin_system,parameters,@hahn_echo,'labframe');
 exact=dense_echo(inter,2:4,parameters.times);
 ordinary=clexpn(spin_system,@hahn_echo,parameters,'labframe');
 
@@ -104,23 +107,26 @@ result=test_close(result,'Three-group pair-factor identity',...
                   'Each pair contributes F_AB*F0/(F_A*F_B).');
 
 % Check canonical user groups and the singleton default
-model=cce_compile(spin_system,parameters,'labframe');
-model.pulse_sequence=@hahn_echo;
-graph=cce_graph(model,struct('method','cce','graph',parameters.cce.graph));
+model_p=cce_options(spin_system,parameters,@cce_compile,'labframe');
+model=cce_compile(spin_system,model_p,'labframe');
+model_sequence=@hahn_echo;
+selection=model_p;
+selection.cce.approximation='projected';
+graph=cce_graph(model,selection);
 parameters.cce.groups={[4 2],3};
-user=cce_partition(model,graph,parameters);
+user=cce_partition(model,graph,parameters,model_sequence);
 result=test_true(result,'Canonical physical-ID groups',...
                  isequal(user.groups,{[2 4],3}),'Each user group is sorted, not repartitioned.');
 parameters.cce.groups={};
-defaults=cce_partition(model,graph,parameters);
+defaults=cce_partition(model,graph,parameters,model_sequence);
 result=test_true(result,'Empty groups mean singleton vertices',...
                  isequal(defaults.groups,{2,3,4}),'The documented groups default is honoured.');
 
 % Check strongest coupling merges and deterministic dimension ceilings
 parameters.cce.partition.mode='coupling';
 parameters.cce.partition.max_dimension=4;
-a=cce_partition(model,graph,parameters);
-b=cce_partition(model,graph,parameters);
+a=cce_partition(model,graph,parameters,model_sequence);
+b=cce_partition(model,graph,parameters,model_sequence);
 result=test_true(result,'Deterministic strongest-edge grouping',...
                  isequal(a,b)&&isequal(a.groups,{[2 3],4})&&all(a.dimensions<=4),...
                  'The 30 Hz pair precedes the 20 Hz pair.');
@@ -128,8 +134,8 @@ result=test_true(result,'Deterministic strongest-edge grouping',...
 % Check capacity-aware spatial assignment and bounded centroid swaps
 parameters.cce.partition=struct('mode','spatial','max_dimension',4,...
                                 'group_count',2,'max_rounds',10);
-a=cce_partition(model,graph,parameters);
-b=cce_partition(model,graph,parameters);
+a=cce_partition(model,graph,parameters,model_sequence);
+b=cce_partition(model,graph,parameters,model_sequence);
 result=test_true(result,'Deterministic spatial grouping',...
                  isequal(a,b)&&a.complete&&isequal(a.groups,{[2 3],4}),...
                  'Farthest-first seeds and objective-decreasing swaps.');
@@ -146,7 +152,7 @@ parameters.cce.partition=struct('mode','user','adaptive',true,'max_dimension',8,
                                 'patch_atol',1e-10,'patch_rtol',1e-10,...
                                 'max_rounds',5,'max_probes',100,'patches',{{2:4}},...
                                 'pilot_configs',ensemble.spin_config,'heldout_configs',held);
-a=cce_partition(model,graph,parameters);
+a=cce_partition(model,graph,parameters,model_sequence);
 result=test_true(result,'Adaptive pilot and held-out gates',...
                  a.complete&&isequal(a.groups,{2:4})&&a.diagnostics.rounds>0&&...
                  ~isempty(a.diagnostics.heldout_error),...
@@ -155,13 +161,14 @@ result=test_true(result,'Adaptive pilot and held-out gates',...
 % Bound diagnostics for both pilot and held-out configuration arrays
 for field={'pilot_configs','heldout_configs'}
     q=parameters;
-    q.cce.numerics.max_memory_bytes=2^16;
+    tight=model;
+    tight.tols.cce_mem=2^16;
     q.cce.partition.(field{1})=repmat(q.cce.partition.(field{1}),1,4096);
     q.cce.partition.patch_atol=1e6;
     q.cce.partition.max_probes=2;
     refused=false;
     try
-        cce_partition(model,graph,q);
+        cce_partition(tight,graph,q,model_sequence);
     catch exception
         refused=strcmp(exception.identifier,'cce_partition:memory');
     end
@@ -169,53 +176,29 @@ for field={'pilot_configs','heldout_configs'}
                      'Pilot and held-out configurations and diagnostics must fit the budget before patch evaluation.');
 end
 
-% Restrict every bath-indexed graph matrix to an ordered proper patch
-for scoring={'explicit','supplied','resonance'}
-    q=parameters;
-    q.cce.groups={2:4};
-    q.cce.partition.patches={[4 2]};
-    q.cce.partition.max_rounds=1;
-    q.cce.graph=struct('mode','complete','score','coupling_norm');
-    switch scoring{1}
-        case 'explicit'
-            q.cce.graph.mode='explicit';
-            q.cce.graph.adjacency=sparse(~eye(3));
-        case 'supplied'
-            q.cce.graph.score='supplied';
-            q.cce.graph.scores=[0 1 2;1 0 3;2 3 0];
-        case 'resonance'
-            q.cce.graph.score='resonance';
-            q.cce.graph.mismatch=[0 1 2;1 0 3;2 3 0];
-            q.cce.graph.mismatch_scale=1;
-    end
-    passed=false;
-    patch_error=Inf;
-    try
-        probe=cce_partition(model,cce_graph(model,struct('method','cce','graph',q.cce.graph)),q);
-        passed=probe.complete;
-        patch_error=max(probe.diagnostics.heldout_error);
-    catch exception
-        fprintf('PATCH_GRAPH %s error=%s\n',scoring{1},exception.identifier);
-    end
-    result=test_true(result,['Adaptive proper-patch graph ' scoring{1}],passed,...
-                     'Full-bath graph matrices follow the declared physical patch ordering.');
-    fprintf('PATCH_GRAPH %s passed=%d error=%.3e\n',scoring{1},passed,patch_error);
-end
+% Restrict the coupling graph to an ordered proper patch
+q=parameters;
+q.cce.groups={2:4};
+q.cce.partition.patches={[4 2]};
+q.cce.partition.max_rounds=1;
+probe=cce_partition(model,graph,q,model_sequence);
+result=test_true(result,'Adaptive proper-patch coupling graph',probe.complete,...
+                 'Physical coupling scores follow the declared patch ordering.');
 
 % Expose each exhausted adaptation budget rather than declaring success
 parameters.cce.partition.max_probes=1;
-limited=cce_partition(model,graph,parameters);
+limited=cce_partition(model,graph,parameters,model_sequence);
 result=test_true(result,'Probe ceiling is incomplete',...
                  ~limited.complete&&limited.diagnostics.probes==1,...
                  'The exhausted probe budget cannot certify the partition.');
 parameters.cce.partition.max_probes=100;
 parameters.cce.partition.max_dimension=2;
-limited=cce_partition(model,graph,parameters);
+limited=cce_partition(model,graph,parameters,model_sequence);
 result=test_true(result,'Exact patch dimension ceiling is incomplete',...
                  ~limited.complete,'An oversized exact patch is not silently dropped.');
 parameters.cce.partition.max_dimension=8;
 parameters.cce.partition.max_rounds=1;
-limited=cce_partition(model,graph,parameters);
+limited=cce_partition(model,graph,parameters,model_sequence);
 result=test_true(result,'Round ceiling is incomplete',...
                  ~limited.complete&&limited.diagnostics.rounds==1,...
                  'One merge cannot make a three-group order-one expansion exact.');
@@ -224,7 +207,7 @@ result=test_true(result,'Round ceiling is incomplete',...
 parameters.cce.groups={2:4};
 parameters.cce.partition.max_rounds=5;
 parameters.cce.partition.max_probes=1;
-limited=cce_partition(model,graph,parameters);
+limited=cce_partition(model,graph,parameters,model_sequence);
 result=test_true(result,'Held-out probe cannot be skipped',...
                  ~limited.complete&&contains(limited.diagnostics.reason,'heldout'),...
                  'Pilot success alone is not adaptive completion.');
@@ -234,7 +217,7 @@ parameters.cce.groups={2,3,4};
 parameters.cce.partition.max_probes=100;
 parameters.cce.partition.patch_atol=1e-3;
 parameters.cce.partition.patch_rtol=0;
-held_failure=cce_partition(model,graph,parameters);
+held_failure=cce_partition(model,graph,parameters,model_sequence);
 result=test_true(result,'Held-out numerical discrepancy is incomplete',...
                  ~held_failure.complete&&contains(held_failure.diagnostics.reason,'heldout'),...
                  'Independent polarized states are not certified by a mixed-state pilot.');
@@ -249,7 +232,7 @@ invalid=parameters;
 invalid.cce.groups={[2 3],[3 4]};
 refused=false;
 try
-    cce_partition(model,graph,invalid);
+    cce_partition(model,graph,invalid,model_sequence);
 catch
     refused=true;
 end
@@ -260,7 +243,7 @@ invalid=parameters;
 invalid.cce.groups={[2 3]};
 refused=false;
 try
-    cce_partition(model,graph,invalid);
+    cce_partition(model,graph,invalid,model_sequence);
 catch
     refused=true;
 end
@@ -271,7 +254,7 @@ invalid=parameters;
 invalid.cce.partition.max_dimension=NaN;
 refused=false;
 try
-    cce_partition(model,graph,invalid);
+    cce_partition(model,graph,invalid,model_sequence);
 catch
     refused=true;
 end
@@ -283,7 +266,7 @@ invalid.cce.partition.adaptive=true;
 invalid.cce.partition.max_probes=1.5;
 refused=false;
 try
-    cce_partition(model,graph,invalid);
+    cce_partition(model,graph,invalid,model_sequence);
 catch
     refused=true;
 end
@@ -297,7 +280,7 @@ invalid.cce.partition.adaptive=true;
 invalid.cce.partition.patch_atol=NaN;
 refused=false;
 try
-    cce_partition(model,graph,invalid);
+    cce_partition(model,graph,invalid,model_sequence);
 catch
     refused=true;
 end
@@ -309,7 +292,7 @@ invalid.cce.partition.adaptive=true;
 invalid.cce.partition.heldout_configs=[];
 refused=false;
 try
-    cce_partition(model,graph,invalid);
+    cce_partition(model,graph,invalid,model_sequence);
 catch
     refused=true;
 end
@@ -322,7 +305,7 @@ invalid.cce.partition=struct('mode','spatial','max_dimension',4,...
                              'group_count',2,'max_rounds',1.5);
 refused=false;
 try
-    cce_partition(model,graph,invalid);
+    cce_partition(model,graph,invalid,model_sequence);
 catch
     refused=true;
 end
@@ -331,10 +314,11 @@ result=test_true(result,'Fractional spatial ceiling rejected',...
                  'Spatial iteration budgets are whole counts.');
 invalid.cce.partition.max_rounds=2;
 bad_model=model;
-bad_model.coordinates_A(2,1)=NaN;
+bad_model_p=model_p;
+bad_model.inter.coordinates{2}=[];
 refused=false;
 try
-    cce_partition(bad_model,graph,invalid);
+    cce_partition(bad_model,graph,invalid,@free_evolution);
 catch
     refused=true;
 end
@@ -356,6 +340,7 @@ end
 
 % Traverse unresolved density reductions until the full three-spin patch is retained
 for method={'gcce','megcce'}
+    local_system=spin_system;
     q=choices();
     q.cce.approximation='generalized';
     q.output='density';
@@ -366,27 +351,27 @@ for method={'gcce','megcce'}
     q.cce.groups={2,3,4};
     if strcmp(method{1},'megcce')
         q.bath_jumps=struct('support',{},'operator',{},'rate',{});
-        q.cce.basis.formalism='zeeman-liouv';
-        q.cce.numerics=rmfield(q.cce.numerics,'propagator');
+        local_system.bas.formalism='zeeman-liouv';
+        q.cce=rmfield(q.cce,'propagator');
     end
-    [q,~]=cce_options(spin_system,q,@free_evolution,'labframe');
-    local_model=cce_compile(spin_system,q,'labframe');
-    local_model.pulse_sequence=@free_evolution;
-    if strcmp(method{1},'megcce')
-        local_model.formalism='zeeman-liouv';
-    end
+    q=cce_options(local_system,q,@free_evolution,'labframe');
+    local_model_p=cce_options(local_system,q,@cce_compile,'labframe');
+    local_model=cce_compile(local_system,local_model_p,'labframe');
+    local_model_sequence=@free_evolution;
     states=singletons_diag.ensemble;
     q.cce.partition=struct('mode','user','adaptive',true,'max_dimension',8,...
                            'patch_atol',1e-10,'patch_rtol',1e-10,'max_rounds',2,'max_probes',100,...
                            'patches',{{2:4}},'pilot_configs',states.spin_config,'heldout_configs',states.spin_config);
-    local_graph=cce_graph(local_model,struct('method','gcce','graph',q.cce.graph));
-    adapted=cce_partition(local_model,local_graph,q);
+    selection=q;
+    selection.cce.approximation='generalized';
+    local_graph=cce_graph(local_model,selection);
+    adapted=cce_partition(local_model,local_graph,q,local_model_sequence);
     result=test_true(result,['Unresolved density intermediate ' method{1}],...
                      adapted.complete&&isequal(adapted.groups,{2:4})&&...
                      adapted.diagnostics.rounds==2&&~isempty(adapted.diagnostics.heldout_error),...
                      'Two bounded merges must reach and validate the exact three-spin density patch.');
     q.cce.partition.max_rounds=1;
-    limited=cce_partition(local_model,local_graph,q);
+    limited=cce_partition(local_model,local_graph,q,local_model_sequence);
     result=test_true(result,['Unresolved density round ceiling ' method{1}],...
                      ~limited.complete&&numel(limited.groups)==2,...
                      'An unresolved intermediate may advance but cannot be accepted.');
@@ -408,25 +393,24 @@ result=test_close(result,'One-group generalized density equals dense echo',...
 
 % Apply exactly the production master-equation evaluator during patch validation
 open=choices();
-open.cce.basis.formalism='zeeman-liouv';
 open.cce.expansion='partition';
-open.cce.numerics=rmfield(open.cce.numerics,'propagator');
+open.cce=rmfield(open.cce,'propagator');
 open.cce.order=1;
 open.cce.groups={2:4};
 open.cce.partition=parameters.cce.partition;
 open.cce.partition.adaptive=true;
 open.cce.partition.max_probes=2;
 open.bath_jumps=struct('support',2,'operator',diag([1 -1])/2,'rate',100);
-[open,~]=cce_options(spin_system,open,@hahn_echo,'labframe');
-open_model=model;
-open_model.formalism='zeeman-liouv';
-open_partition=cce_partition(open_model,graph,open);
+open=cce_options(spin_system,open,@hahn_echo,'labframe');
+open_model=cce_compile(spin_system,open,'labframe');
+open_partition=cce_partition(open_model,graph,open,@free_evolution);
 result=test_true(result,'Master-equation adaptive evaluator',...
                  open_partition.complete&&open_partition.diagnostics.probes==2,...
                  'Pilot and held-out probes use the same dissipative evaluator.');
 
 % Bypass singular auxiliary factors whenever the complete patch is included
 for method={'gcce','megcce'}
+    local_system=spin_system;
     q=choices();
     q.cce.approximation='generalized';
     q.output='density';
@@ -439,16 +423,14 @@ for method={'gcce','megcce'}
     q.cce.partition=struct('mode','user','max_dimension',2);
     if strcmp(method{1},'megcce')
         q.bath_jumps=struct('support',{},'operator',{},'rate',{});
-        q.cce.basis.formalism='zeeman-liouv';
-        q.cce.numerics.propagator='stock';
+        local_system.bas.formalism='zeeman-liouv';
+        q.cce.propagator='stock';
     end
-    [reference,reference_diag]=clexpn(spin_system,@free_evolution,q,'labframe');
-    [q,~]=cce_options(spin_system,q,@free_evolution,'labframe');
-    local_model=cce_compile(spin_system,q,'labframe');
-    local_model.pulse_sequence=@free_evolution;
-    if strcmp(method{1},'megcce')
-        local_model.formalism='zeeman-liouv';
-    end
+    [reference,reference_diag]=clexpn(local_system,@free_evolution,q,'labframe');
+    q=cce_options(local_system,q,@free_evolution,'labframe');
+    local_model_p=cce_options(local_system,q,@cce_compile,'labframe');
+    local_model=cce_compile(local_system,local_model_p,'labframe');
+    local_model_sequence=@free_evolution;
     states=reference_diag.ensemble;
     q.cce.partition.adaptive=true;
     q.cce.partition.patches={2};
@@ -459,11 +441,11 @@ for method={'gcce','megcce'}
     q.cce.partition.pilot_configs=states.spin_config;
     q.cce.partition.heldout_configs=states.spin_config;
     for policy={'mask','error'}
-        q.cce.numerics.zero_policy=policy{1};
+        q.cce.zero_policy=policy{1};
         accepted=false;
         patch_error=Inf;
         try
-            [probe,probe_diag]=clexpn(spin_system,@free_evolution,q,'labframe');
+            [probe,probe_diag]=clexpn(local_system,@free_evolution,q,'labframe');
             accepted=all(probe_diag.reduction.valid,'all');
             patch_error=norm(probe(:)-reference(:));
         catch exception
@@ -479,40 +461,34 @@ for method={'gcce','megcce'}
 end
 
 % Reject every incomplete adaptive partition before a one-output production call
-for graph_mode={'complete','explicit'}
-    for refusal=1:4
-        q=choices();
-        q.cce.expansion='partition';
-        q.cce.order=1;
-        q.cce.groups={2,3,4};
-        q.cce.graph.mode=graph_mode{1};
-        if strcmp(graph_mode{1},'explicit')
-            q.cce.graph.adjacency=sparse(~eye(3));
-        end
-        q.cce.partition=struct('mode','adaptive','max_dimension',8,...
-                               'patch_atol',1e-10,'patch_rtol',1e-10,...
-                               'max_rounds',5,'max_probes',100,'patches',{{2:4}},...
-                               'pilot_configs',ensemble.spin_config,'heldout_configs',held);
-        switch refusal
-            case 1
-                q.cce.partition.max_probes=1;
-            case 2
-                q.cce.partition.max_dimension=2;
-            case 3
-                q.cce.partition.max_rounds=1;
-            case 4
-                q.cce.partition.patch_atol=1e-3;
-                q.cce.partition.patch_rtol=0;
-        end
-        rejected=false;
-        try
-            clexpn(spin_system,@hahn_echo,q,'labframe');
-        catch exception
-            rejected=strcmp(exception.identifier,'clexpn:partition');
-        end
-        result=test_true(result,['Incomplete production partition ' graph_mode{1} ' ' num2str(refusal)],...
-                         rejected,'Pilot, held-out, capacity, and iteration failures cannot become ordinary answers.');
+for refusal=1:4
+    q=choices();
+    q.cce.expansion='partition';
+    q.cce.order=1;
+    q.cce.groups={2,3,4};
+    q.cce.partition=struct('mode','adaptive','max_dimension',8,...
+                           'patch_atol',1e-10,'patch_rtol',1e-10,...
+                           'max_rounds',5,'max_probes',100,'patches',{{2:4}},...
+                           'pilot_configs',ensemble.spin_config,'heldout_configs',held);
+    switch refusal
+        case 1
+            q.cce.partition.max_probes=1;
+        case 2
+            q.cce.partition.max_dimension=2;
+        case 3
+            q.cce.partition.max_rounds=1;
+        case 4
+            q.cce.partition.patch_atol=1e-3;
+            q.cce.partition.patch_rtol=0;
     end
+    rejected=false;
+    try
+        clexpn(spin_system,@hahn_echo,q,'labframe');
+    catch exception
+        rejected=strcmp(exception.identifier,'clexpn:partition');
+    end
+    result=test_true(result,['Incomplete production partition ' num2str(refusal)],...
+                     rejected,'Pilot, held-out, capacity, and iteration failures cannot become ordinary answers.');
 end
 
 % Print quantitative evidence without adding nonstandard result fields
@@ -542,12 +518,9 @@ parameters.transition.alpha=[1;0];
 parameters.transition.beta=[0;1];
 parameters.orientation=[0 0 0];
 parameters.cce.interaction_cutoff=Inf;
-parameters.cce.graph.mode='complete';
-parameters.cce.graph.score='coupling_norm';
-parameters.cce.bath_state.mode='mixed_product';
 parameters.cce.meanfield='none';
-parameters.cce.numerics=struct('max_memory_bytes',2^28,'atol',1e-10,'rtol',1e-10,...
-                               'zero_policy','mask','propagator','eig');
+parameters.cce.zero_policy='mask';
+parameters.cce.propagator='eig';
 parameters.cce.averaging='after_expansion';
 
 end

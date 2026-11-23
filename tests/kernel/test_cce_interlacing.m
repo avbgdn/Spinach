@@ -20,6 +20,9 @@ sys.isotopes={'1H','1H','1H','1H'};
 sys.magnet=0;
 sys.disable={'hygiene'};
 sys.parallel={'processes',1};
+sys.tols.cce_atol=1e-9;
+sys.tols.cce_rtol=1e-9;
+sys.tols.cce_mem=2^26;
 sys.output='hush';
 inter.coupling.matrix=cell(4);
 inter.coupling.matrix{1,2}=diag([2 1 5])/(2*pi);
@@ -40,34 +43,34 @@ p.transition.alpha=[1;0];
 p.transition.beta=[0;1];
 p.orientation=[0 0 0];
 p.cce.interaction_cutoff=Inf;
-p.cce.graph=struct('mode','complete','score','coupling_norm');
-p.cce.bath_state=struct('mode','interlaced','samples',1,'seed',31,'basis','uniform',...
-                        'probabilities',{{[0.7 0.3],[0.2 0.8],[0.6 0.4]}});
+p.bath_samples=1;
+p.bath_seed=31;
+p.bath_probs={[0.7 0.3],[0.2 0.8],[0.6 0.4]};
 p.cce.meanfield='static';
 p.cce.interlaced=struct('max_states',16,'reference_state',1);
-p.cce.numerics=struct('atol',1e-9,'rtol',1e-9,'max_memory_bytes',2^26);
 [~,details]=clexpn(spin_system,@free_evolution,p,'labframe');
 p=details.parameters;
-model=cce_compile(spin_system,p,'labframe');
-model.clusters=details.clusters;
+model_p=cce_options(spin_system,p,@cce_compile,'labframe');
+model=cce_compile(spin_system,model_p,'labframe');
+model_clusters=details.clusters;
 ensemble=details.ensemble;
-schedule=struct('pulse_sequence',@free_evolution,'contract',details.contract);
+schedule=@free_evolution;
 
 pulse_sequence=@free_evolution;
-evaluator=schedule.contract.evaluator;
 
 % Refuse count-scaled storage before constructing conditioning assignments
 q=p;
 q.times=0;
 q.cce.approximation='projected';
 q.normalized=true;
-q.cce.numerics.max_memory_bytes=1000;
+tight=model;
+tight.tols.cce_mem=1000;
 q.cce.interlaced=struct('max_states',8,'reference_state',1,...
                         'condition_sites',{{[2 3 4]}},'raw_only',true);
 probe=struct('id',uint64(0),'sites',[],'groups',[]);
 refused=false;
 try
-    cce_interlace(model,probe,ensemble,schedule,q,evaluator);
+    cce_interlace(tight,probe,model_clusters,ensemble,schedule,q);
 catch exception
     refused=strcmp(exception.identifier,'cce_interlace:memory');
 end
@@ -77,11 +80,12 @@ result=test_true(result,'Conditioning union memory preflight',refused,...
 % Sampling is bounded before allocating configuration records or assignments
 q=p;
 q.cce.order=0;
-q.cce.bath_state.samples=1024;
-q.cce.numerics.max_memory_bytes=4096;
+q.bath_samples=1024;
+tight=model;
+tight.tols.cce_mem=4096;
 refused=false;
 try
-    clexpn(model.spin_system,@free_evolution,q,'labframe');
+    clexpn(tight,@free_evolution,q,'labframe');
 catch exception
     refused=strcmp(exception.identifier,'clexpn:memory');
 end
@@ -91,10 +95,11 @@ result=test_true(result,'Sampled configuration memory preflight',refused,...
 % Direct propagation has the same output-storage contract as the scheduler
 q=p;
 q.times=linspace(0,1,1024);
-q.cce.numerics.max_memory_bytes=4096;
+tight=model;
+tight.tols.cce_mem=4096;
 refused=false;
 try
-    evaluator(model,probe,ensemble.spin_config(1),schedule,q);
+    cce_evaluate(tight,probe,ensemble.spin_config(1),schedule,q);
 catch exception
     refused=strcmp(exception.identifier,'clexpn:memory');
 end
@@ -104,14 +109,14 @@ ensemble.spin_config(1).assignment=[1 1 1];
 ensemble.spin_config(1).bath_rho={diag([1 0]),diag([1 0]),diag([1 0])};
 p.cce.interlaced=struct('reference_state',1,'max_states',16,'condition_sites',{{[2 3],[2 4]}});
 cluster=struct('id',uint64(1),'sites',2);
-raw=cce_interlace(model,cluster,ensemble,schedule,p,evaluator);
+raw=cce_interlace(model,cluster,model_clusters,ensemble,schedule,p);
 
 % Reject reference states inconsistent with their declared product assignment
 rejected=false;
 supplied=ensemble;
 supplied.spin_config(1).bath_rho{1}=eye(2)/2;
 try
-    cce_interlace(model,cluster,supplied,schedule,p,evaluator);
+    cce_interlace(model,cluster,model_clusters,supplied,schedule,p);
 catch exception
     rejected=strcmp(exception.identifier,'cce:spin_config');
 end
@@ -123,7 +128,7 @@ supplied=ensemble;
 supplied.spin_config(1).assignment=[2 1 1];
 rejected=false;
 try
-    cce_interlace(model,cluster,supplied,schedule,p,evaluator);
+    cce_interlace(model,cluster,model_clusters,supplied,schedule,p);
 catch exception
     rejected=strcmp(exception.identifier,'cce:spin_config');
 end
@@ -135,7 +140,7 @@ supplied=ensemble;
 supplied.spin_config(1).projection=eye(2);
 rejected=false;
 try
-    cce_interlace(model,cluster,supplied,schedule,p,evaluator);
+    cce_interlace(model,cluster,model_clusters,supplied,schedule,p);
 catch exception
     rejected=strcmp(exception.identifier,'cce_subsystem:configuration');
 end
@@ -150,7 +155,7 @@ q.output='density';
 q.times=0;
 supplied=ensemble;
 q.rho0=diag([0.2 0.8]);
-initial=cce_interlace(model,cluster,supplied,schedule,q,evaluator);
+initial=cce_interlace(model,cluster,model_clusters,supplied,schedule,q);
 expected=q.rho0;
 result=test_close(result,'Interlaced supplied observed state',initial.value,expected(:).',...
                   1e-12,1e-12,'The experiment-owned observed density survives the projected bath average.');
@@ -164,11 +169,12 @@ baseline_ok=true;
 baseline_error=Inf;
 try
     empty_model=model;
-    empty_model.clusters=model.clusters([]);
-    baseline=cce_interlace(empty_model,empty_cluster,ensemble,schedule,q,evaluator);
+    empty_model_p=model_p;
+    empty_model_clusters=model_clusters([]);
+    baseline=cce_interlace(empty_model,empty_cluster,empty_model_clusters,ensemble,schedule,q);
     reference=ensemble.spin_config(1);
     reference.bath_rho={diag([1 0]),diag([1 0]),diag([1 0])};
-    direct=evaluator(model,empty_cluster,reference,schedule,q);
+    direct=cce_evaluate(model,empty_cluster,reference,schedule,q);
     baseline_error=norm(baseline.value-direct.value);
 catch exception
     baseline_ok=false;
@@ -186,9 +192,9 @@ for method={'cce','gcce','mecce','megcce'}
         q.cce.approximation='generalized';
         q.normalized=false;
     end
-    q.cce.basis.formalism='zeeman-hilb';
+    driver_model=model;
     if ismember(method{1},{'mecce','megcce'})
-        q.cce.basis.formalism='zeeman-liouv';
+        driver_model.bas.formalism='zeeman-liouv';
     end
     q.bath_jumps=struct([]);
     if strcmp(q.cce.approximation,'generalized')
@@ -197,7 +203,7 @@ for method={'cce','gcce','mecce','megcce'}
         q=rmfield(q,'rho0');
     end
     try
-        [driver,~]=clexpn(model.spin_system,pulse_sequence,q,'labframe');
+        [driver,~]=clexpn(driver_model,pulse_sequence,q,'labframe');
         driver_ok=all(isfinite(driver(:)));
     catch exception
         driver_ok=false;
@@ -235,9 +241,9 @@ for a=1:2
                 rho=zeros(2);
                 rho(assignment(j),assignment(j))=1;
                 spin_config.bath_rho{j}=rho;
-                weight=weight*p.cce.bath_state.probabilities{j}(assignment(j));
+                weight=weight*p.bath_probs{j}(assignment(j));
             end
-            item=evaluator(model,cluster,spin_config,schedule,p);
+            item=cce_evaluate(model,cluster,spin_config,schedule,p);
             value=value+weight*item.value;
             mass=mass+weight;
             duplicated=duplicated+multiplicity*weight*item.value;
@@ -255,23 +261,24 @@ result=test_true(result,'Duplicate-occurrence weighting gives a detectably diffe
 probe=p;
 probe.cce.interlaced.raw_only=true;
 probe.cce.interlaced.condition_sites={[2 3 4]};
-probe.cce.bath_state.basis={eye(2),[0 1;1 0],eye(2)};
+probe.bath_basis={eye(2),[0 1;1 0],eye(2)};
 probe_model=model;
-probe_model.zeeman{2}(3,:)=[0.731 0.473 0.122];
+probe_model_p=model_p;
+probe_model.cce.zeeman{2}(3,:)=[0.731 0.473 0.122];
 sample=probe;
 sample.cce.interlaced.raw_only=false;
-[~,probe_details]=clexpn(probe_model.spin_system,@free_evolution,sample,'labframe');
+[~,probe_details]=clexpn(probe_model,@free_evolution,sample,'labframe');
 probe_ensemble=probe_details.ensemble;
-measured=cce_interlace(probe_model,cluster,probe_ensemble,schedule,probe,evaluator);
+measured=cce_interlace(probe_model,cluster,[],probe_ensemble,schedule,probe);
 residual=0;
 orthogonality=0;
 for k=1:size(measured.assignments,1)
     spin_config=probe_ensemble.spin_config(1);
     for j=1:3
-        vector=probe.cce.bath_state.basis{j}(:,measured.assignments(k,j));
+        vector=probe.bath_basis{j}(:,measured.assignments(k,j));
         spin_config.bath_rho{j}=vector*vector';
     end
-    item=evaluator(probe_model,cluster,spin_config,schedule,probe);
+    item=cce_evaluate(probe_model,cluster,spin_config,schedule,probe);
     residual=max(residual,max(item.eigen_residual));
     orthogonality=max(orthogonality,max(item.orthogonality_residual));
 end
@@ -282,33 +289,32 @@ result=test_close(result,'Interlaced worst orthogonality retained',max(measured.
 
 % Denominator subclusters are conditioned on exactly the numerator distribution
 empty=struct('id',uint64(0),'sites',[]);
-baseline=cce_interlace(model,empty,ensemble,schedule,p,evaluator);
+baseline=cce_interlace(model,empty,model_clusters,ensemble,schedule,p);
 result=test_true(result,...
                  'Explicit shared K is identical in numerator and empty denominator',isequal(raw.assignments,baseline.assignments)&&isequal(raw.weights,baseline.weights),...
                  'Explicit shared K is identical in numerator and empty denominator');
 p.cce.interlaced.max_states=7;
 refused=false;
 try
-    cce_interlace(model,cluster,ensemble,schedule,p,evaluator);
+    cce_interlace(model,cluster,model_clusters,ensemble,schedule,p);
 catch exception
     refused=strcmp(exception.identifier,'cce_interlace:budget');
 end
 result=test_true(result,'Enumeration work exceeding the declared budget is refused',refused,'Enumeration work exceeding the declared budget is refused');
 p.cce.interlaced.max_states=16;
 p.cce.interlaced=rmfield(p.cce.interlaced,'condition_sites');
-automatic=cce_interlace(model,cluster,ensemble,schedule,p,evaluator);
+automatic=cce_interlace(model,cluster,model_clusters,ensemble,schedule,p);
 result=test_true(result,'Included-supercluster family generates the same K automatically',isequal(automatic.assignments,expected),'Included-supercluster family generates the same K automatically');
 
 % At full order every conditioning cylinder is the full bath and W12 is exact
 p.cce.order=3;
 p.cce.interlaced.max_states=32;
-[integrated,~]=clexpn(model.spin_system,pulse_sequence,p,'labframe');
-mixture=p;
-mixture.cce.bath_state=struct('mode','explicit_product',...
-                              'rho',{{diag([0.7 0.3]),diag([0.2 0.8]),diag([0.6 0.4])}});
+[integrated,~]=clexpn(model,pulse_sequence,p,'labframe');
+mixture=rmfield(p,{'bath_samples','bath_seed','bath_probs'});
+mixture.bath_state={diag([0.7 0.3]),diag([0.2 0.8]),diag([0.6 0.4])};
 mixture.cce.meanfield='none';
 mixture.cce=rmfield(mixture.cce,'interlaced');
-[exact,~]=clexpn(model.spin_system,pulse_sequence,mixture,'labframe');
+[exact,~]=clexpn(model,pulse_sequence,mixture,'labframe');
 result=test_close(result,'Full-order W12 equals exact mixed bath',integrated,exact,...
                   1e-11,0,'Shared-K recursion telescopes at full bath order');
 
@@ -334,9 +340,8 @@ q=rmfield(q,'rho0');
 q.cce.bath_spins=[2 3];
 q.cce.order=2;
 q.times=[0 pi/2];
-q.cce.bath_state.probabilities='uniform';
-reference=q;
-reference.cce.bath_state=struct('mode','mixed_product');
+q=rmfield(q,'bath_probs');
+reference=rmfield(q,{'bath_samples','bath_seed'});
 reference.cce=rmfield(reference.cce,'interlaced');
 reference.cce.meanfield='none';
 [exact,~]=clexpn(spin_system,pulse_sequence,reference,'labframe');
@@ -366,8 +371,7 @@ result=test_close(result,'Generalized interlaced full-bath zero baseline',genera
 fprintf('R1242 interlaced %.16g; exact %.16g.\n',real(full_bath(end)),real(exact(end)));
 
 % Require the common result schema and diagnostics on the interlaced path
-reference=q;
-reference.cce.bath_state=struct('mode','mixed_product');
+reference=rmfield(q,{'bath_samples','bath_seed'});
 reference.cce=rmfield(reference.cce,'interlaced');
 [standard,standard_details]=clexpn(spin_system,pulse_sequence,reference,'labframe');
 result=test_true(result,'Interlaced common result fields',...
@@ -404,7 +408,7 @@ q=p;
 q.cce.bath_spins=[2 3];
 q.times=[0 0.3 0.8];
 q.cce.meanfield='none';
-q.cce.bath_state.probabilities='uniform';
+q=rmfield(q,'bath_probs');
 q.cce.interlaced=struct('max_states',4);
 q.bath_jumps=struct('support',1,'operator',diag([1 -1]),'rate',0.7);
 for method={'mecce','megcce'}
@@ -417,11 +421,9 @@ for method={'mecce','megcce'}
     elseif isfield(q,'rho0')
         q=rmfield(q,'rho0');
     end
-    q.cce.basis.formalism='zeeman-liouv';
     for order=1:2
         q.cce.order=order;
-        reference=q;
-        reference.cce.bath_state=struct('mode','mixed_product');
+        reference=rmfield(q,{'bath_samples','bath_seed'});
         reference.cce=rmfield(reference.cce,'interlaced');
         [expected,~]=clexpn(spin_system,pulse_sequence,reference,'labframe');
         matched=false;
@@ -464,7 +466,7 @@ q.cce.approximation='generalized';
 q.normalized=false;
 q.cce.bath_spins=[2 3];
 q.cce.meanfield='none';
-q.cce.bath_state.probabilities='uniform';
+q=rmfield(q,'bath_probs');
 q.times=[0 0.2 0.5];
 q.cce.interlaced=struct('max_states',4);
 driven_ok=true;
@@ -475,14 +477,13 @@ for sequence={@hahn_echo,@finite_drive}
     pulse_sequence=sequence{1};
     if isequal(pulse_sequence,@finite_drive)
         q.drive=finite;
-        q.cce.numerics=rmfield(q.cce.numerics,'propagator');
+        q.cce=rmfield(q.cce,'propagator');
     else
-        q.cce.numerics.propagator='expm';
+        q.cce.propagator='expm';
     end
     for order=1:2
         q.cce.order=order;
-        reference=q;
-        reference.cce.bath_state=struct('mode','mixed_product');
+        reference=rmfield(q,{'bath_samples','bath_seed'});
         reference.cce=rmfield(reference.cce,'interlaced');
         [expected,~]=clexpn(spin_system,pulse_sequence,reference,'labframe');
         try
